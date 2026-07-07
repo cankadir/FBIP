@@ -2,6 +2,7 @@
   import L from "leaflet";
   import { onMount } from "svelte";
   import { count } from "./store.js";
+  import { setupMapPanes } from "./utils.js";
   
   let mapContainer;
 
@@ -9,6 +10,8 @@
     center: [40.723, -73.961],
     zoom: 17,
   });
+
+  setupMapPanes(map);
 
   //set map to store. It needs to be accessed from other objects
   count.set(map)

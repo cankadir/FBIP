@@ -135,9 +135,10 @@ p {
         z-index: 2000000!important;
     }
     .photo-container {
-        flex-direction: row;
+        flex-direction: column;
         order: 3!important;
-        width: 400px;
+        width: 100%;
+        max-width: 400px;
         height: auto;
         margin: auto;
     }
@@ -190,9 +191,6 @@ p {
 }
 
 .active {
-    stroke: var(--borderOrange);
-    stroke-width: 4;
-    z-index: 20002;
     fill: var(--selectColor);
 }
 

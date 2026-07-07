@@ -29,7 +29,7 @@
 </script>
 
 <div class="homebutton" on:click={handlelayer}>
-    <img alt="key" src="https://raw.githubusercontent.com/PrattSAVI/FBIP/main/public/img/key_icon.svg" >
+    <img alt="key" src="https://raw.githubusercontent.com/cankadir/FBIP/refs/heads/2606-updates/public/img/key_icon.svg" >
 </div>
 
 

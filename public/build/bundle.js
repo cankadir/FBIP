@@ -3645,414 +3645,6 @@ var app = (function () {
     }
   });
 
-  // `RegExp.prototype.flags` getter implementation
-  // https://tc39.es/ecma262/#sec-get-regexp.prototype.flags
-  var regexpFlags = function () {
-    var that = anObject(this);
-    var result = '';
-    if (that.global) result += 'g';
-    if (that.ignoreCase) result += 'i';
-    if (that.multiline) result += 'm';
-    if (that.dotAll) result += 's';
-    if (that.unicode) result += 'u';
-    if (that.sticky) result += 'y';
-    return result;
-  };
-
-  // babel-minify and Closure Compiler transpiles RegExp('a', 'y') -> /a/y and it causes SyntaxError
-  var $RegExp$2 = global$2.RegExp;
-
-  var UNSUPPORTED_Y$3 = fails(function () {
-    var re = $RegExp$2('a', 'y');
-    re.lastIndex = 2;
-    return re.exec('abcd') != null;
-  });
-
-  var BROKEN_CARET = fails(function () {
-    // https://bugzilla.mozilla.org/show_bug.cgi?id=773687
-    var re = $RegExp$2('^r', 'gy');
-    re.lastIndex = 2;
-    return re.exec('str') != null;
-  });
-
-  var regexpStickyHelpers = {
-  	UNSUPPORTED_Y: UNSUPPORTED_Y$3,
-  	BROKEN_CARET: BROKEN_CARET
-  };
-
-  // babel-minify and Closure Compiler transpiles RegExp('.', 's') -> /./s and it causes SyntaxError
-  var $RegExp$1 = global$2.RegExp;
-
-  var regexpUnsupportedDotAll = fails(function () {
-    var re = $RegExp$1('.', 's');
-    return !(re.dotAll && re.exec('\n') && re.flags === 's');
-  });
-
-  // babel-minify and Closure Compiler transpiles RegExp('(?<a>b)', 'g') -> /(?<a>b)/g and it causes SyntaxError
-  var $RegExp = global$2.RegExp;
-
-  var regexpUnsupportedNcg = fails(function () {
-    var re = $RegExp('(?<a>b)', 'g');
-    return re.exec('b').groups.a !== 'b' ||
-      'b'.replace(re, '$<a>c') !== 'bc';
-  });
-
-  /* eslint-disable regexp/no-empty-capturing-group, regexp/no-empty-group, regexp/no-lazy-ends -- testing */
-  /* eslint-disable regexp/no-useless-quantifier -- testing */
-
-
-
-
-
-  var getInternalState$1 = internalState.get;
-
-
-
-  var nativeExec = RegExp.prototype.exec;
-  var nativeReplace = shared('native-string-replace', String.prototype.replace);
-
-  var patchedExec = nativeExec;
-
-  var UPDATES_LAST_INDEX_WRONG = (function () {
-    var re1 = /a/;
-    var re2 = /b*/g;
-    nativeExec.call(re1, 'a');
-    nativeExec.call(re2, 'a');
-    return re1.lastIndex !== 0 || re2.lastIndex !== 0;
-  })();
-
-  var UNSUPPORTED_Y$2 = regexpStickyHelpers.UNSUPPORTED_Y || regexpStickyHelpers.BROKEN_CARET;
-
-  // nonparticipating capturing group, copied from es5-shim's String#split patch.
-  var NPCG_INCLUDED = /()??/.exec('')[1] !== undefined;
-
-  var PATCH = UPDATES_LAST_INDEX_WRONG || NPCG_INCLUDED || UNSUPPORTED_Y$2 || regexpUnsupportedDotAll || regexpUnsupportedNcg;
-
-  if (PATCH) {
-    // eslint-disable-next-line max-statements -- TODO
-    patchedExec = function exec(string) {
-      var re = this;
-      var state = getInternalState$1(re);
-      var str = toString$1(string);
-      var raw = state.raw;
-      var result, reCopy, lastIndex, match, i, object, group;
-
-      if (raw) {
-        raw.lastIndex = re.lastIndex;
-        result = patchedExec.call(raw, str);
-        re.lastIndex = raw.lastIndex;
-        return result;
-      }
-
-      var groups = state.groups;
-      var sticky = UNSUPPORTED_Y$2 && re.sticky;
-      var flags = regexpFlags.call(re);
-      var source = re.source;
-      var charsAdded = 0;
-      var strCopy = str;
-
-      if (sticky) {
-        flags = flags.replace('y', '');
-        if (flags.indexOf('g') === -1) {
-          flags += 'g';
-        }
-
-        strCopy = str.slice(re.lastIndex);
-        // Support anchored sticky behavior.
-        if (re.lastIndex > 0 && (!re.multiline || re.multiline && str.charAt(re.lastIndex - 1) !== '\n')) {
-          source = '(?: ' + source + ')';
-          strCopy = ' ' + strCopy;
-          charsAdded++;
-        }
-        // ^(? + rx + ) is needed, in combination with some str slicing, to
-        // simulate the 'y' flag.
-        reCopy = new RegExp('^(?:' + source + ')', flags);
-      }
-
-      if (NPCG_INCLUDED) {
-        reCopy = new RegExp('^' + source + '$(?!\\s)', flags);
-      }
-      if (UPDATES_LAST_INDEX_WRONG) lastIndex = re.lastIndex;
-
-      match = nativeExec.call(sticky ? reCopy : re, strCopy);
-
-      if (sticky) {
-        if (match) {
-          match.input = match.input.slice(charsAdded);
-          match[0] = match[0].slice(charsAdded);
-          match.index = re.lastIndex;
-          re.lastIndex += match[0].length;
-        } else re.lastIndex = 0;
-      } else if (UPDATES_LAST_INDEX_WRONG && match) {
-        re.lastIndex = re.global ? match.index + match[0].length : lastIndex;
-      }
-      if (NPCG_INCLUDED && match && match.length > 1) {
-        // Fix browsers whose `exec` methods don't consistently return `undefined`
-        // for NPCG, like IE8. NOTE: This doesn' work for /(.?)?/
-        nativeReplace.call(match[0], reCopy, function () {
-          for (i = 1; i < arguments.length - 2; i++) {
-            if (arguments[i] === undefined) match[i] = undefined;
-          }
-        });
-      }
-
-      if (match && groups) {
-        match.groups = object = objectCreate(null);
-        for (i = 0; i < groups.length; i++) {
-          group = groups[i];
-          object[group[0]] = match[group[1]];
-        }
-      }
-
-      return match;
-    };
-  }
-
-  var regexpExec = patchedExec;
-
-  // `RegExp.prototype.exec` method
-  // https://tc39.es/ecma262/#sec-regexp.prototype.exec
-  _export({ target: 'RegExp', proto: true, forced: /./.exec !== regexpExec }, {
-    exec: regexpExec
-  });
-
-  // TODO: Remove from `core-js@4` since it's moved to entry points
-
-
-
-
-
-
-
-  var SPECIES = wellKnownSymbol('species');
-  var RegExpPrototype$2 = RegExp.prototype;
-
-  var fixRegexpWellKnownSymbolLogic = function (KEY, exec, FORCED, SHAM) {
-    var SYMBOL = wellKnownSymbol(KEY);
-
-    var DELEGATES_TO_SYMBOL = !fails(function () {
-      // String methods call symbol-named RegEp methods
-      var O = {};
-      O[SYMBOL] = function () { return 7; };
-      return ''[KEY](O) != 7;
-    });
-
-    var DELEGATES_TO_EXEC = DELEGATES_TO_SYMBOL && !fails(function () {
-      // Symbol-named RegExp methods call .exec
-      var execCalled = false;
-      var re = /a/;
-
-      if (KEY === 'split') {
-        // We can't use real regex here since it causes deoptimization
-        // and serious performance degradation in V8
-        // https://github.com/zloirock/core-js/issues/306
-        re = {};
-        // RegExp[@@split] doesn't call the regex's exec method, but first creates
-        // a new one. We need to return the patched regex when creating the new one.
-        re.constructor = {};
-        re.constructor[SPECIES] = function () { return re; };
-        re.flags = '';
-        re[SYMBOL] = /./[SYMBOL];
-      }
-
-      re.exec = function () { execCalled = true; return null; };
-
-      re[SYMBOL]('');
-      return !execCalled;
-    });
-
-    if (
-      !DELEGATES_TO_SYMBOL ||
-      !DELEGATES_TO_EXEC ||
-      FORCED
-    ) {
-      var nativeRegExpMethod = /./[SYMBOL];
-      var methods = exec(SYMBOL, ''[KEY], function (nativeMethod, regexp, str, arg2, forceStringMethod) {
-        var $exec = regexp.exec;
-        if ($exec === regexpExec || $exec === RegExpPrototype$2.exec) {
-          if (DELEGATES_TO_SYMBOL && !forceStringMethod) {
-            // The native String method already delegates to @@method (this
-            // polyfilled function), leasing to infinite recursion.
-            // We avoid it by directly calling the native @@method method.
-            return { done: true, value: nativeRegExpMethod.call(regexp, str, arg2) };
-          }
-          return { done: true, value: nativeMethod.call(str, regexp, arg2) };
-        }
-        return { done: false };
-      });
-
-      redefine(String.prototype, KEY, methods[0]);
-      redefine(RegExpPrototype$2, SYMBOL, methods[1]);
-    }
-
-    if (SHAM) createNonEnumerableProperty(RegExpPrototype$2[SYMBOL], 'sham', true);
-  };
-
-  var MATCH$2 = wellKnownSymbol('match');
-
-  // `IsRegExp` abstract operation
-  // https://tc39.es/ecma262/#sec-isregexp
-  var isRegexp = function (it) {
-    var isRegExp;
-    return isObject(it) && ((isRegExp = it[MATCH$2]) !== undefined ? !!isRegExp : classofRaw(it) == 'RegExp');
-  };
-
-  var charAt = stringMultibyte.charAt;
-
-  // `AdvanceStringIndex` abstract operation
-  // https://tc39.es/ecma262/#sec-advancestringindex
-  var advanceStringIndex = function (S, index, unicode) {
-    return index + (unicode ? charAt(S, index).length : 1);
-  };
-
-  // `RegExpExec` abstract operation
-  // https://tc39.es/ecma262/#sec-regexpexec
-  var regexpExecAbstract = function (R, S) {
-    var exec = R.exec;
-    if (isCallable(exec)) {
-      var result = exec.call(R, S);
-      if (result !== null) anObject(result);
-      return result;
-    }
-    if (classofRaw(R) === 'RegExp') return regexpExec.call(R, S);
-    throw TypeError('RegExp#exec called on incompatible receiver');
-  };
-
-  var UNSUPPORTED_Y$1 = regexpStickyHelpers.UNSUPPORTED_Y;
-  var arrayPush = [].push;
-  var min$5 = Math.min;
-  var MAX_UINT32 = 0xFFFFFFFF;
-
-  // Chrome 51 has a buggy "split" implementation when RegExp#exec !== nativeExec
-  // Weex JS has frozen built-in prototypes, so use try / catch wrapper
-  var SPLIT_WORKS_WITH_OVERWRITTEN_EXEC = !fails(function () {
-    // eslint-disable-next-line regexp/no-empty-group -- required for testing
-    var re = /(?:)/;
-    var originalExec = re.exec;
-    re.exec = function () { return originalExec.apply(this, arguments); };
-    var result = 'ab'.split(re);
-    return result.length !== 2 || result[0] !== 'a' || result[1] !== 'b';
-  });
-
-  // @@split logic
-  fixRegexpWellKnownSymbolLogic('split', function (SPLIT, nativeSplit, maybeCallNative) {
-    var internalSplit;
-    if (
-      'abbc'.split(/(b)*/)[1] == 'c' ||
-      // eslint-disable-next-line regexp/no-empty-group -- required for testing
-      'test'.split(/(?:)/, -1).length != 4 ||
-      'ab'.split(/(?:ab)*/).length != 2 ||
-      '.'.split(/(.?)(.?)/).length != 4 ||
-      // eslint-disable-next-line regexp/no-empty-capturing-group, regexp/no-empty-group -- required for testing
-      '.'.split(/()()/).length > 1 ||
-      ''.split(/.?/).length
-    ) {
-      // based on es5-shim implementation, need to rework it
-      internalSplit = function (separator, limit) {
-        var string = toString$1(requireObjectCoercible(this));
-        var lim = limit === undefined ? MAX_UINT32 : limit >>> 0;
-        if (lim === 0) return [];
-        if (separator === undefined) return [string];
-        // If `separator` is not a regex, use native split
-        if (!isRegexp(separator)) {
-          return nativeSplit.call(string, separator, lim);
-        }
-        var output = [];
-        var flags = (separator.ignoreCase ? 'i' : '') +
-                    (separator.multiline ? 'm' : '') +
-                    (separator.unicode ? 'u' : '') +
-                    (separator.sticky ? 'y' : '');
-        var lastLastIndex = 0;
-        // Make `global` and avoid `lastIndex` issues by working with a copy
-        var separatorCopy = new RegExp(separator.source, flags + 'g');
-        var match, lastIndex, lastLength;
-        while (match = regexpExec.call(separatorCopy, string)) {
-          lastIndex = separatorCopy.lastIndex;
-          if (lastIndex > lastLastIndex) {
-            output.push(string.slice(lastLastIndex, match.index));
-            if (match.length > 1 && match.index < string.length) arrayPush.apply(output, match.slice(1));
-            lastLength = match[0].length;
-            lastLastIndex = lastIndex;
-            if (output.length >= lim) break;
-          }
-          if (separatorCopy.lastIndex === match.index) separatorCopy.lastIndex++; // Avoid an infinite loop
-        }
-        if (lastLastIndex === string.length) {
-          if (lastLength || !separatorCopy.test('')) output.push('');
-        } else output.push(string.slice(lastLastIndex));
-        return output.length > lim ? output.slice(0, lim) : output;
-      };
-    // Chakra, V8
-    } else if ('0'.split(undefined, 0).length) {
-      internalSplit = function (separator, limit) {
-        return separator === undefined && limit === 0 ? [] : nativeSplit.call(this, separator, limit);
-      };
-    } else internalSplit = nativeSplit;
-
-    return [
-      // `String.prototype.split` method
-      // https://tc39.es/ecma262/#sec-string.prototype.split
-      function split(separator, limit) {
-        var O = requireObjectCoercible(this);
-        var splitter = separator == undefined ? undefined : getMethod(separator, SPLIT);
-        return splitter
-          ? splitter.call(separator, O, limit)
-          : internalSplit.call(toString$1(O), separator, limit);
-      },
-      // `RegExp.prototype[@@split]` method
-      // https://tc39.es/ecma262/#sec-regexp.prototype-@@split
-      //
-      // NOTE: This cannot be properly polyfilled in engines that don't support
-      // the 'y' flag.
-      function (string, limit) {
-        var rx = anObject(this);
-        var S = toString$1(string);
-        var res = maybeCallNative(internalSplit, rx, S, limit, internalSplit !== nativeSplit);
-
-        if (res.done) return res.value;
-
-        var C = speciesConstructor(rx, RegExp);
-
-        var unicodeMatching = rx.unicode;
-        var flags = (rx.ignoreCase ? 'i' : '') +
-                    (rx.multiline ? 'm' : '') +
-                    (rx.unicode ? 'u' : '') +
-                    (UNSUPPORTED_Y$1 ? 'g' : 'y');
-
-        // ^(? + rx + ) is needed, in combination with some S slicing, to
-        // simulate the 'y' flag.
-        var splitter = new C(UNSUPPORTED_Y$1 ? '^(?:' + rx.source + ')' : rx, flags);
-        var lim = limit === undefined ? MAX_UINT32 : limit >>> 0;
-        if (lim === 0) return [];
-        if (S.length === 0) return regexpExecAbstract(splitter, S) === null ? [S] : [];
-        var p = 0;
-        var q = 0;
-        var A = [];
-        while (q < S.length) {
-          splitter.lastIndex = UNSUPPORTED_Y$1 ? 0 : q;
-          var z = regexpExecAbstract(splitter, UNSUPPORTED_Y$1 ? S.slice(q) : S);
-          var e;
-          if (
-            z === null ||
-            (e = min$5(toLength(splitter.lastIndex + (UNSUPPORTED_Y$1 ? q : 0)), S.length)) === p
-          ) {
-            q = advanceStringIndex(S, q, unicodeMatching);
-          } else {
-            A.push(S.slice(p, q));
-            if (A.length === lim) return A;
-            for (var i = 1; i <= z.length - 1; i++) {
-              A.push(z[i]);
-              if (A.length === lim) return A;
-            }
-            q = p = e;
-          }
-        }
-        A.push(S.slice(p));
-        return A;
-      }
-    ];
-  }, !SPLIT_WORKS_WITH_OVERWRITTEN_EXEC, UNSUPPORTED_Y$1);
-
   var FAILS_ON_PRIMITIVES$1 = fails(function () { objectKeys(1); });
 
   // `Object.keys` method
@@ -4906,7 +4498,7 @@ var app = (function () {
 
   var PROPER_FUNCTION_NAME$3 = functionName.PROPER;
   var CONFIGURABLE_FUNCTION_NAME = functionName.CONFIGURABLE;
-  var getInternalState = internalState.get;
+  var getInternalState$1 = internalState.get;
   var setInternalState$1 = internalState.set;
   var ARRAY_BUFFER = 'ArrayBuffer';
   var DATA_VIEW = 'DataView';
@@ -4948,14 +4540,14 @@ var app = (function () {
   };
 
   var addGetter = function (Constructor, key) {
-    defineProperty$3(Constructor[PROTOTYPE], key, { get: function () { return getInternalState(this)[key]; } });
+    defineProperty$3(Constructor[PROTOTYPE], key, { get: function () { return getInternalState$1(this)[key]; } });
   };
 
   var get$1 = function (view, count, index, isLittleEndian) {
     var intIndex = toIndex(index);
-    var store = getInternalState(view);
+    var store = getInternalState$1(view);
     if (intIndex + count > store.byteLength) throw RangeError$1(WRONG_INDEX);
-    var bytes = getInternalState(store.buffer).bytes;
+    var bytes = getInternalState$1(store.buffer).bytes;
     var start = intIndex + store.byteOffset;
     var pack = bytes.slice(start, start + count);
     return isLittleEndian ? pack : pack.reverse();
@@ -4963,9 +4555,9 @@ var app = (function () {
 
   var set = function (view, count, index, conversion, value, isLittleEndian) {
     var intIndex = toIndex(index);
-    var store = getInternalState(view);
+    var store = getInternalState$1(view);
     if (intIndex + count > store.byteLength) throw RangeError$1(WRONG_INDEX);
-    var bytes = getInternalState(store.buffer).bytes;
+    var bytes = getInternalState$1(store.buffer).bytes;
     var start = intIndex + store.byteOffset;
     var pack = conversion(+value);
     for (var i = 0; i < count; i++) bytes[start + i] = pack[isLittleEndian ? i : count - i - 1];
@@ -4985,7 +4577,7 @@ var app = (function () {
     $DataView = function DataView(buffer, byteOffset, byteLength) {
       anInstance(this, $DataView, DATA_VIEW);
       anInstance(buffer, $ArrayBuffer, DATA_VIEW);
-      var bufferLength = getInternalState(buffer).byteLength;
+      var bufferLength = getInternalState$1(buffer).byteLength;
       var offset = toIntegerOrInfinity(byteOffset);
       if (offset < 0 || offset > bufferLength) throw RangeError$1('Wrong offset');
       byteLength = byteLength === undefined ? bufferLength - offset : toLength(byteLength);
@@ -5416,7 +5008,7 @@ var app = (function () {
     };
   });
 
-  var min$4 = Math.min;
+  var min$5 = Math.min;
 
   // `Array.prototype.copyWithin` method implementation
   // https://tc39.es/ecma262/#sec-array.prototype.copywithin
@@ -5427,7 +5019,7 @@ var app = (function () {
     var to = toAbsoluteIndex(target, len);
     var from = toAbsoluteIndex(start, len);
     var end = arguments.length > 2 ? arguments[2] : undefined;
-    var count = min$4((end === undefined ? len : toAbsoluteIndex(end, len)) - from, len - to);
+    var count = min$5((end === undefined ? len : toAbsoluteIndex(end, len)) - from, len - to);
     var inc = 1;
     if (from < to && to < from + count) {
       inc = -1;
@@ -5615,7 +5207,7 @@ var app = (function () {
 
 
 
-  var min$3 = Math.min;
+  var min$4 = Math.min;
   var $lastIndexOf = [].lastIndexOf;
   var NEGATIVE_ZERO = !!$lastIndexOf && 1 / [1].lastIndexOf(1, -0) < 0;
   var STRICT_METHOD$2 = arrayMethodIsStrict('lastIndexOf');
@@ -5629,7 +5221,7 @@ var app = (function () {
     var O = toIndexedObject(this);
     var length = lengthOfArrayLike(O);
     var index = length - 1;
-    if (arguments.length > 1) index = min$3(index, toIntegerOrInfinity(arguments[1]));
+    if (arguments.length > 1) index = min$4(index, toIntegerOrInfinity(arguments[1]));
     if (index < 0) index = length + index;
     for (;index >= 0; index--) if (index in O && O[index] === searchElement) return index || 0;
     return -1;
@@ -6144,7 +5736,7 @@ var app = (function () {
   var HAS_SPECIES_SUPPORT$1 = arrayMethodHasSpeciesSupport('splice');
 
   var max$1 = Math.max;
-  var min$2 = Math.min;
+  var min$3 = Math.min;
   var MAX_SAFE_INTEGER = 0x1FFFFFFFFFFFFF;
   var MAXIMUM_ALLOWED_LENGTH_EXCEEDED = 'Maximum allowed length exceeded';
 
@@ -6165,7 +5757,7 @@ var app = (function () {
         actualDeleteCount = len - actualStart;
       } else {
         insertCount = argumentsLength - 2;
-        actualDeleteCount = min$2(max$1(toIntegerOrInfinity(deleteCount), 0), len - actualStart);
+        actualDeleteCount = min$3(max$1(toIntegerOrInfinity(deleteCount), 0), len - actualStart);
       }
       if (len + insertCount - actualDeleteCount > MAX_SAFE_INTEGER) {
         throw TypeError(MAXIMUM_ALLOWED_LENGTH_EXCEEDED);
@@ -6200,6 +5792,15 @@ var app = (function () {
     }
   });
 
+  var MATCH$2 = wellKnownSymbol('match');
+
+  // `IsRegExp` abstract operation
+  // https://tc39.es/ecma262/#sec-isregexp
+  var isRegexp = function (it) {
+    var isRegExp;
+    return isObject(it) && ((isRegExp = it[MATCH$2]) !== undefined ? !!isRegExp : classofRaw(it) == 'RegExp');
+  };
+
   var notARegexp = function (it) {
     if (isRegexp(it)) {
       throw TypeError("The method doesn't accept regular expressions");
@@ -6230,7 +5831,7 @@ var app = (function () {
 
   // eslint-disable-next-line es/no-string-prototype-startswith -- safe
   var $startsWith = ''.startsWith;
-  var min$1 = Math.min;
+  var min$2 = Math.min;
 
   var CORRECT_IS_REGEXP_LOGIC = correctIsRegexpLogic('startsWith');
   // https://github.com/zloirock/core-js/pull/702
@@ -6245,7 +5846,7 @@ var app = (function () {
     startsWith: function startsWith(searchString /* , position = 0 */) {
       var that = toString$1(requireObjectCoercible(this));
       notARegexp(searchString);
-      var index = toLength(min$1(arguments.length > 1 ? arguments[1] : undefined, that.length));
+      var index = toLength(min$2(arguments.length > 1 ? arguments[1] : undefined, that.length));
       var search = toString$1(searchString);
       return $startsWith
         ? $startsWith.call(that, search, index)
@@ -6323,6 +5924,405 @@ var app = (function () {
       return $map(this, callbackfn, arguments.length > 1 ? arguments[1] : undefined);
     }
   });
+
+  // `RegExp.prototype.flags` getter implementation
+  // https://tc39.es/ecma262/#sec-get-regexp.prototype.flags
+  var regexpFlags = function () {
+    var that = anObject(this);
+    var result = '';
+    if (that.global) result += 'g';
+    if (that.ignoreCase) result += 'i';
+    if (that.multiline) result += 'm';
+    if (that.dotAll) result += 's';
+    if (that.unicode) result += 'u';
+    if (that.sticky) result += 'y';
+    return result;
+  };
+
+  // babel-minify and Closure Compiler transpiles RegExp('a', 'y') -> /a/y and it causes SyntaxError
+  var $RegExp$2 = global$2.RegExp;
+
+  var UNSUPPORTED_Y$3 = fails(function () {
+    var re = $RegExp$2('a', 'y');
+    re.lastIndex = 2;
+    return re.exec('abcd') != null;
+  });
+
+  var BROKEN_CARET = fails(function () {
+    // https://bugzilla.mozilla.org/show_bug.cgi?id=773687
+    var re = $RegExp$2('^r', 'gy');
+    re.lastIndex = 2;
+    return re.exec('str') != null;
+  });
+
+  var regexpStickyHelpers = {
+  	UNSUPPORTED_Y: UNSUPPORTED_Y$3,
+  	BROKEN_CARET: BROKEN_CARET
+  };
+
+  // babel-minify and Closure Compiler transpiles RegExp('.', 's') -> /./s and it causes SyntaxError
+  var $RegExp$1 = global$2.RegExp;
+
+  var regexpUnsupportedDotAll = fails(function () {
+    var re = $RegExp$1('.', 's');
+    return !(re.dotAll && re.exec('\n') && re.flags === 's');
+  });
+
+  // babel-minify and Closure Compiler transpiles RegExp('(?<a>b)', 'g') -> /(?<a>b)/g and it causes SyntaxError
+  var $RegExp = global$2.RegExp;
+
+  var regexpUnsupportedNcg = fails(function () {
+    var re = $RegExp('(?<a>b)', 'g');
+    return re.exec('b').groups.a !== 'b' ||
+      'b'.replace(re, '$<a>c') !== 'bc';
+  });
+
+  /* eslint-disable regexp/no-empty-capturing-group, regexp/no-empty-group, regexp/no-lazy-ends -- testing */
+  /* eslint-disable regexp/no-useless-quantifier -- testing */
+
+
+
+
+
+  var getInternalState = internalState.get;
+
+
+
+  var nativeExec = RegExp.prototype.exec;
+  var nativeReplace = shared('native-string-replace', String.prototype.replace);
+
+  var patchedExec = nativeExec;
+
+  var UPDATES_LAST_INDEX_WRONG = (function () {
+    var re1 = /a/;
+    var re2 = /b*/g;
+    nativeExec.call(re1, 'a');
+    nativeExec.call(re2, 'a');
+    return re1.lastIndex !== 0 || re2.lastIndex !== 0;
+  })();
+
+  var UNSUPPORTED_Y$2 = regexpStickyHelpers.UNSUPPORTED_Y || regexpStickyHelpers.BROKEN_CARET;
+
+  // nonparticipating capturing group, copied from es5-shim's String#split patch.
+  var NPCG_INCLUDED = /()??/.exec('')[1] !== undefined;
+
+  var PATCH = UPDATES_LAST_INDEX_WRONG || NPCG_INCLUDED || UNSUPPORTED_Y$2 || regexpUnsupportedDotAll || regexpUnsupportedNcg;
+
+  if (PATCH) {
+    // eslint-disable-next-line max-statements -- TODO
+    patchedExec = function exec(string) {
+      var re = this;
+      var state = getInternalState(re);
+      var str = toString$1(string);
+      var raw = state.raw;
+      var result, reCopy, lastIndex, match, i, object, group;
+
+      if (raw) {
+        raw.lastIndex = re.lastIndex;
+        result = patchedExec.call(raw, str);
+        re.lastIndex = raw.lastIndex;
+        return result;
+      }
+
+      var groups = state.groups;
+      var sticky = UNSUPPORTED_Y$2 && re.sticky;
+      var flags = regexpFlags.call(re);
+      var source = re.source;
+      var charsAdded = 0;
+      var strCopy = str;
+
+      if (sticky) {
+        flags = flags.replace('y', '');
+        if (flags.indexOf('g') === -1) {
+          flags += 'g';
+        }
+
+        strCopy = str.slice(re.lastIndex);
+        // Support anchored sticky behavior.
+        if (re.lastIndex > 0 && (!re.multiline || re.multiline && str.charAt(re.lastIndex - 1) !== '\n')) {
+          source = '(?: ' + source + ')';
+          strCopy = ' ' + strCopy;
+          charsAdded++;
+        }
+        // ^(? + rx + ) is needed, in combination with some str slicing, to
+        // simulate the 'y' flag.
+        reCopy = new RegExp('^(?:' + source + ')', flags);
+      }
+
+      if (NPCG_INCLUDED) {
+        reCopy = new RegExp('^' + source + '$(?!\\s)', flags);
+      }
+      if (UPDATES_LAST_INDEX_WRONG) lastIndex = re.lastIndex;
+
+      match = nativeExec.call(sticky ? reCopy : re, strCopy);
+
+      if (sticky) {
+        if (match) {
+          match.input = match.input.slice(charsAdded);
+          match[0] = match[0].slice(charsAdded);
+          match.index = re.lastIndex;
+          re.lastIndex += match[0].length;
+        } else re.lastIndex = 0;
+      } else if (UPDATES_LAST_INDEX_WRONG && match) {
+        re.lastIndex = re.global ? match.index + match[0].length : lastIndex;
+      }
+      if (NPCG_INCLUDED && match && match.length > 1) {
+        // Fix browsers whose `exec` methods don't consistently return `undefined`
+        // for NPCG, like IE8. NOTE: This doesn' work for /(.?)?/
+        nativeReplace.call(match[0], reCopy, function () {
+          for (i = 1; i < arguments.length - 2; i++) {
+            if (arguments[i] === undefined) match[i] = undefined;
+          }
+        });
+      }
+
+      if (match && groups) {
+        match.groups = object = objectCreate(null);
+        for (i = 0; i < groups.length; i++) {
+          group = groups[i];
+          object[group[0]] = match[group[1]];
+        }
+      }
+
+      return match;
+    };
+  }
+
+  var regexpExec = patchedExec;
+
+  // `RegExp.prototype.exec` method
+  // https://tc39.es/ecma262/#sec-regexp.prototype.exec
+  _export({ target: 'RegExp', proto: true, forced: /./.exec !== regexpExec }, {
+    exec: regexpExec
+  });
+
+  // TODO: Remove from `core-js@4` since it's moved to entry points
+
+
+
+
+
+
+
+  var SPECIES = wellKnownSymbol('species');
+  var RegExpPrototype$2 = RegExp.prototype;
+
+  var fixRegexpWellKnownSymbolLogic = function (KEY, exec, FORCED, SHAM) {
+    var SYMBOL = wellKnownSymbol(KEY);
+
+    var DELEGATES_TO_SYMBOL = !fails(function () {
+      // String methods call symbol-named RegEp methods
+      var O = {};
+      O[SYMBOL] = function () { return 7; };
+      return ''[KEY](O) != 7;
+    });
+
+    var DELEGATES_TO_EXEC = DELEGATES_TO_SYMBOL && !fails(function () {
+      // Symbol-named RegExp methods call .exec
+      var execCalled = false;
+      var re = /a/;
+
+      if (KEY === 'split') {
+        // We can't use real regex here since it causes deoptimization
+        // and serious performance degradation in V8
+        // https://github.com/zloirock/core-js/issues/306
+        re = {};
+        // RegExp[@@split] doesn't call the regex's exec method, but first creates
+        // a new one. We need to return the patched regex when creating the new one.
+        re.constructor = {};
+        re.constructor[SPECIES] = function () { return re; };
+        re.flags = '';
+        re[SYMBOL] = /./[SYMBOL];
+      }
+
+      re.exec = function () { execCalled = true; return null; };
+
+      re[SYMBOL]('');
+      return !execCalled;
+    });
+
+    if (
+      !DELEGATES_TO_SYMBOL ||
+      !DELEGATES_TO_EXEC ||
+      FORCED
+    ) {
+      var nativeRegExpMethod = /./[SYMBOL];
+      var methods = exec(SYMBOL, ''[KEY], function (nativeMethod, regexp, str, arg2, forceStringMethod) {
+        var $exec = regexp.exec;
+        if ($exec === regexpExec || $exec === RegExpPrototype$2.exec) {
+          if (DELEGATES_TO_SYMBOL && !forceStringMethod) {
+            // The native String method already delegates to @@method (this
+            // polyfilled function), leasing to infinite recursion.
+            // We avoid it by directly calling the native @@method method.
+            return { done: true, value: nativeRegExpMethod.call(regexp, str, arg2) };
+          }
+          return { done: true, value: nativeMethod.call(str, regexp, arg2) };
+        }
+        return { done: false };
+      });
+
+      redefine(String.prototype, KEY, methods[0]);
+      redefine(RegExpPrototype$2, SYMBOL, methods[1]);
+    }
+
+    if (SHAM) createNonEnumerableProperty(RegExpPrototype$2[SYMBOL], 'sham', true);
+  };
+
+  var charAt = stringMultibyte.charAt;
+
+  // `AdvanceStringIndex` abstract operation
+  // https://tc39.es/ecma262/#sec-advancestringindex
+  var advanceStringIndex = function (S, index, unicode) {
+    return index + (unicode ? charAt(S, index).length : 1);
+  };
+
+  // `RegExpExec` abstract operation
+  // https://tc39.es/ecma262/#sec-regexpexec
+  var regexpExecAbstract = function (R, S) {
+    var exec = R.exec;
+    if (isCallable(exec)) {
+      var result = exec.call(R, S);
+      if (result !== null) anObject(result);
+      return result;
+    }
+    if (classofRaw(R) === 'RegExp') return regexpExec.call(R, S);
+    throw TypeError('RegExp#exec called on incompatible receiver');
+  };
+
+  var UNSUPPORTED_Y$1 = regexpStickyHelpers.UNSUPPORTED_Y;
+  var arrayPush = [].push;
+  var min$1 = Math.min;
+  var MAX_UINT32 = 0xFFFFFFFF;
+
+  // Chrome 51 has a buggy "split" implementation when RegExp#exec !== nativeExec
+  // Weex JS has frozen built-in prototypes, so use try / catch wrapper
+  var SPLIT_WORKS_WITH_OVERWRITTEN_EXEC = !fails(function () {
+    // eslint-disable-next-line regexp/no-empty-group -- required for testing
+    var re = /(?:)/;
+    var originalExec = re.exec;
+    re.exec = function () { return originalExec.apply(this, arguments); };
+    var result = 'ab'.split(re);
+    return result.length !== 2 || result[0] !== 'a' || result[1] !== 'b';
+  });
+
+  // @@split logic
+  fixRegexpWellKnownSymbolLogic('split', function (SPLIT, nativeSplit, maybeCallNative) {
+    var internalSplit;
+    if (
+      'abbc'.split(/(b)*/)[1] == 'c' ||
+      // eslint-disable-next-line regexp/no-empty-group -- required for testing
+      'test'.split(/(?:)/, -1).length != 4 ||
+      'ab'.split(/(?:ab)*/).length != 2 ||
+      '.'.split(/(.?)(.?)/).length != 4 ||
+      // eslint-disable-next-line regexp/no-empty-capturing-group, regexp/no-empty-group -- required for testing
+      '.'.split(/()()/).length > 1 ||
+      ''.split(/.?/).length
+    ) {
+      // based on es5-shim implementation, need to rework it
+      internalSplit = function (separator, limit) {
+        var string = toString$1(requireObjectCoercible(this));
+        var lim = limit === undefined ? MAX_UINT32 : limit >>> 0;
+        if (lim === 0) return [];
+        if (separator === undefined) return [string];
+        // If `separator` is not a regex, use native split
+        if (!isRegexp(separator)) {
+          return nativeSplit.call(string, separator, lim);
+        }
+        var output = [];
+        var flags = (separator.ignoreCase ? 'i' : '') +
+                    (separator.multiline ? 'm' : '') +
+                    (separator.unicode ? 'u' : '') +
+                    (separator.sticky ? 'y' : '');
+        var lastLastIndex = 0;
+        // Make `global` and avoid `lastIndex` issues by working with a copy
+        var separatorCopy = new RegExp(separator.source, flags + 'g');
+        var match, lastIndex, lastLength;
+        while (match = regexpExec.call(separatorCopy, string)) {
+          lastIndex = separatorCopy.lastIndex;
+          if (lastIndex > lastLastIndex) {
+            output.push(string.slice(lastLastIndex, match.index));
+            if (match.length > 1 && match.index < string.length) arrayPush.apply(output, match.slice(1));
+            lastLength = match[0].length;
+            lastLastIndex = lastIndex;
+            if (output.length >= lim) break;
+          }
+          if (separatorCopy.lastIndex === match.index) separatorCopy.lastIndex++; // Avoid an infinite loop
+        }
+        if (lastLastIndex === string.length) {
+          if (lastLength || !separatorCopy.test('')) output.push('');
+        } else output.push(string.slice(lastLastIndex));
+        return output.length > lim ? output.slice(0, lim) : output;
+      };
+    // Chakra, V8
+    } else if ('0'.split(undefined, 0).length) {
+      internalSplit = function (separator, limit) {
+        return separator === undefined && limit === 0 ? [] : nativeSplit.call(this, separator, limit);
+      };
+    } else internalSplit = nativeSplit;
+
+    return [
+      // `String.prototype.split` method
+      // https://tc39.es/ecma262/#sec-string.prototype.split
+      function split(separator, limit) {
+        var O = requireObjectCoercible(this);
+        var splitter = separator == undefined ? undefined : getMethod(separator, SPLIT);
+        return splitter
+          ? splitter.call(separator, O, limit)
+          : internalSplit.call(toString$1(O), separator, limit);
+      },
+      // `RegExp.prototype[@@split]` method
+      // https://tc39.es/ecma262/#sec-regexp.prototype-@@split
+      //
+      // NOTE: This cannot be properly polyfilled in engines that don't support
+      // the 'y' flag.
+      function (string, limit) {
+        var rx = anObject(this);
+        var S = toString$1(string);
+        var res = maybeCallNative(internalSplit, rx, S, limit, internalSplit !== nativeSplit);
+
+        if (res.done) return res.value;
+
+        var C = speciesConstructor(rx, RegExp);
+
+        var unicodeMatching = rx.unicode;
+        var flags = (rx.ignoreCase ? 'i' : '') +
+                    (rx.multiline ? 'm' : '') +
+                    (rx.unicode ? 'u' : '') +
+                    (UNSUPPORTED_Y$1 ? 'g' : 'y');
+
+        // ^(? + rx + ) is needed, in combination with some S slicing, to
+        // simulate the 'y' flag.
+        var splitter = new C(UNSUPPORTED_Y$1 ? '^(?:' + rx.source + ')' : rx, flags);
+        var lim = limit === undefined ? MAX_UINT32 : limit >>> 0;
+        if (lim === 0) return [];
+        if (S.length === 0) return regexpExecAbstract(splitter, S) === null ? [S] : [];
+        var p = 0;
+        var q = 0;
+        var A = [];
+        while (q < S.length) {
+          splitter.lastIndex = UNSUPPORTED_Y$1 ? 0 : q;
+          var z = regexpExecAbstract(splitter, UNSUPPORTED_Y$1 ? S.slice(q) : S);
+          var e;
+          if (
+            z === null ||
+            (e = min$1(toLength(splitter.lastIndex + (UNSUPPORTED_Y$1 ? q : 0)), S.length)) === p
+          ) {
+            q = advanceStringIndex(S, q, unicodeMatching);
+          } else {
+            A.push(S.slice(p, q));
+            if (A.length === lim) return A;
+            for (var i = 1; i <= z.length - 1; i++) {
+              A.push(z[i]);
+              if (A.length === lim) return A;
+            }
+            q = p = e;
+          }
+        }
+        A.push(S.slice(p));
+        return A;
+      }
+    ];
+  }, !SPLIT_WORKS_WITH_OVERWRITTEN_EXEC, UNSUPPORTED_Y$1);
 
   var nativeJoin = [].join;
 
@@ -6588,9 +6588,9 @@ var app = (function () {
   // https://tc39.es/ecma262/#sec-array.prototype-@@unscopables
   addToUnscopables('fill');
 
-  function _createSuper$g(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$g(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+  function _createSuper$h(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$h(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
 
-  function _isNativeReflectConstruct$g() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+  function _isNativeReflectConstruct$h() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
 
   function noop() {}
 
@@ -6731,6 +6731,10 @@ var app = (function () {
 
   function element(name) {
     return document.createElement(name);
+  }
+
+  function svg_element(name) {
+    return document.createElementNS('http://www.w3.org/2000/svg', name);
   }
 
   function text(data) {
@@ -7318,7 +7322,7 @@ var app = (function () {
   var SvelteComponentDev = /*#__PURE__*/function (_SvelteComponent) {
     _inherits(SvelteComponentDev, _SvelteComponent);
 
-    var _super3 = _createSuper$g(SvelteComponentDev);
+    var _super3 = _createSuper$h(SvelteComponentDev);
 
     function SvelteComponentDev(options) {
       _classCallCheck(this, SvelteComponentDev);
@@ -21102,12 +21106,237 @@ var app = (function () {
   var map = {};
   var count = writable(map);
 
-  function _createSuper$f(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$f(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+  var mapActions = {
+    resetSelection: function resetSelection() {}
+  };
+  var mapLabels = [{
+    lat: 40.7216,
+    lon: -73.9624,
+    label: "Marsha&nbsp;P. Johnson State&nbsp;Park"
+  }, {
+    lat: 40.72430238,
+    lon: -73.95974738,
+    label: "Bayside"
+  }, {
+    lat: 40.7233,
+    lon: -73.9599,
+    label: "50&nbsp;Kent"
+  }, {
+    lat: 40.72589720,
+    lon: -73.9612948,
+    label: "Monitor&nbsp;Museum"
+  }, {
+    lat: 40.72586,
+    lon: -73.9591,
+    label: "40&nbsp;Quay"
+  }, {
+    lat: 40.72525,
+    lon: -73.9581,
+    label: "Motiva"
+  }, {
+    lat: 40.72331325,
+    lon: -73.96132996,
+    label: "CitiStorage South"
+  }, {
+    lat: 40.72234,
+    lon: -73.9616,
+    label: "86&nbsp;Kent"
+  }, {
+    lat: 40.7235,
+    lon: -73.961,
+    label: "BUSHWICK INLET&nbsp;PARK"
+  }, {
+    lat: 40.72406,
+    lon: -73.9611,
+    label: "CitiStorage North"
+  }];
+  var legendItems = [{
+    type: 'hr',
+    label: 'Bushwick Inlet Park Boundary'
+  }, {
+    type: 'hatch',
+    label: 'NYC Parks Dept. Land - undeveloped'
+  }, {
+    type: 'rect',
+    color: 'var(--parkColor)',
+    label: 'NYC Parks Dept. Land - open to the public'
+  }, {
+    type: 'rect',
+    color: 'var(--stateColor)',
+    label: 'Other Adjacent Waterfront Sites'
+  }];
 
-  function _isNativeReflectConstruct$f() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
-  var file$d = "src\\Map.svelte";
+  var undevelopedOwner = 'bip-undevelopped';
+  var hatchBgColor = '#82C444';
+  var hatchLineColor = '#274200';
+  var hatchStrokeColor = '#ffffff';
+  var crossHatchPatternId = 'bip-crosshatch';
+  var crossHatchSelectedPatternId = 'bip-crosshatch-selected'; // Bottom → top: parcels, hatch, border white, border dash, selected outline
 
-  function create_fragment$f(ctx) {
+  var mapPanes = {
+    parcels: 'fbip-parcels',
+    hatch: 'fbip-hatch',
+    borderWhite: 'fbip-border-white',
+    borderDash: 'fbip-border-dash',
+    selected: 'fbip-selected'
+  };
+  function isUndevelopedOwner(owner) {
+    return owner === undevelopedOwner;
+  }
+  function enforceMapLayerOrder(map) {
+    if (!map) return;
+    var order = [mapPanes.parcels, mapPanes.hatch, mapPanes.borderWhite, mapPanes.borderDash, mapPanes.selected];
+    order.forEach(function (name, i) {
+      var pane = map.getPane(name);
+      if (pane) pane.style.zIndex = 410 + i * 10;
+    });
+  }
+  function setupMapPanes(map) {
+    if (!map || map._fbipPanesReady) return;
+    [mapPanes.parcels, mapPanes.hatch, mapPanes.borderWhite, mapPanes.borderDash, mapPanes.selected].forEach(function (name) {
+      if (!map.getPane(name)) map.createPane(name);
+    });
+    enforceMapLayerOrder(map);
+    map._fbipPanesReady = true;
+  }
+
+  function getPaneSvg(map, paneName) {
+    var pane = paneName ? map.getPane(paneName) : map.getPanes().overlayPane;
+    if (!pane) return null;
+    return pane.querySelector('svg');
+  }
+
+  function getColor(d) {
+    return d === "other" ? "var(--stateColor)" : d === "bip" ? "var(--parkColor)" : d === undevelopedOwner ? "var(--parkColor)" : d === "" ? "FFFFFF" : '#FFFFFF';
+  }
+  var selectColor = '#5BBA02';
+  function getSelectedFillColor() {
+    return selectColor;
+  }
+  function getParcelStyle(owner) {
+    var parcelStyle = {
+      fillColor: getColor(owner),
+      color: lineColor(owner),
+      fillOpacity: 0.9,
+      weight: lineWeight(owner),
+      opacity: 0.9
+    };
+
+    if (isUndevelopedOwner(owner)) {
+      parcelStyle.weight = 0;
+      parcelStyle.opacity = 0;
+      parcelStyle.color = 'transparent';
+    }
+
+    return parcelStyle;
+  }
+  function lineColor(d) {
+    return d === "other" ? "white" : d === "bip" ? "white" : d === undevelopedOwner ? "white" : d === "" ? "black" : '#000000';
+  }
+  function lineWeight(d) {
+    return d === "other" ? 0.8 : d === "bip" ? 0.8 : d === undevelopedOwner ? 0.8 : d === "" ? .5 : .5;
+  }
+  function normalizeBbl(bbl) {
+    if (bbl == null || bbl === '') return '';
+    return String(bbl).replace(/\.0+$/, '');
+  }
+  function getUndevelopedBbls(table) {
+    if (!table || !table.length) return [];
+    return table.filter(function (row) {
+      return row['Owner'] === undevelopedOwner;
+    }).map(function (row) {
+      return normalizeBbl(row['BBL']);
+    }).filter(Boolean);
+  }
+  function getGeojsonFeatures(geojson) {
+    if (!geojson) return [];
+    return Array.isArray(geojson) ? geojson : geojson.features || [];
+  }
+  function getUndevelopedFeatures(geojson, table) {
+    var undevelopedBbls = getUndevelopedBbls(table);
+    if (!undevelopedBbls.length) return [];
+    return getGeojsonFeatures(geojson).filter(function (feature) {
+      var featureBbl = normalizeBbl(feature.properties && feature.properties.BBL);
+      return undevelopedBbls.indexOf(featureBbl) !== -1;
+    });
+  }
+
+  function createCrossHatchPattern(id, bgColor) {
+    var pattern = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
+    pattern.setAttribute('id', id);
+    pattern.setAttribute('patternUnits', 'userSpaceOnUse');
+    pattern.setAttribute('width', '10');
+    pattern.setAttribute('height', '10');
+    pattern.setAttribute('patternTransform', 'rotate(0 5 5) scale(0.8)');
+    var bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bg.setAttribute('width', '10');
+    bg.setAttribute('height', '10');
+    bg.setAttribute('fill', bgColor);
+    pattern.appendChild(bg);
+    var lines = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    lines.setAttribute('x1', '-10');
+    lines.setAttribute('y1', '5');
+    lines.setAttribute('x2', '20');
+    lines.setAttribute('y2', '5');
+    lines.setAttribute('stroke', hatchLineColor);
+    lines.setAttribute('stroke-width', '1.5');
+    lines.setAttribute('stroke-opacity', '0.7');
+    lines.setAttribute('stroke-linecap', 'butt');
+    pattern.appendChild(lines);
+    return pattern;
+  }
+
+  function addCrossHatchPattern(map, paneName) {
+    if (!map || map._bipCrossHatchPatternAdded) return true;
+    var svg = getPaneSvg(map, paneName || mapPanes.hatch);
+    if (!svg) return false;
+    var defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    defs.appendChild(createCrossHatchPattern(crossHatchPatternId, hatchBgColor));
+    defs.appendChild(createCrossHatchPattern(crossHatchSelectedPatternId, selectColor));
+    svg.insertBefore(defs, svg.firstChild);
+    map._bipCrossHatchPatternAdded = true;
+    return true;
+  }
+  function applyHatchFill(layer, selected) {
+    if (!layer._path) return;
+    var patternId = selected ? crossHatchSelectedPatternId : crossHatchPatternId;
+
+    layer._path.setAttribute('fill', 'url(#' + patternId + ')');
+
+    layer._path.setAttribute('stroke', hatchStrokeColor);
+
+    layer._path.setAttribute('stroke-width', '0.8');
+
+    layer._path.setAttribute('stroke-opacity', '0.9');
+
+    layer._path.style.pointerEvents = 'none';
+  }
+  function getHatchOverlayStyle() {
+    return {
+      stroke: true,
+      color: '#ffffff',
+      weight: 0.8,
+      opacity: 0.9,
+      fillOpacity: 1,
+      interactive: false
+    };
+  }
+  function addLabel2(map, lat, lon, label) {
+    var myIcon = leafletSrc.divIcon({
+      className: 'map-labels',
+      html: label
+    });
+    leafletSrc.marker([lat, lon], {
+      icon: myIcon
+    }).addTo(map);
+  }
+
+  function _createSuper$g(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$g(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+
+  function _isNativeReflectConstruct$g() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+  var file$e = "src\\Map.svelte";
+
+  function create_fragment$g(ctx) {
     var div;
     var current;
     var default_slot_template =
@@ -21121,7 +21350,7 @@ var app = (function () {
         div = element("div");
         if (default_slot) default_slot.c();
         attr_dev(div, "class", "map svelte-mych6o");
-        add_location(div, file$d, 41, 0, 1122);
+        add_location(div, file$e, 44, 0, 1194);
       },
       l: function claim(nodes) {
         throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -21175,7 +21404,7 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_fragment$f.name,
+      id: create_fragment$g.name,
       type: "component",
       source: "",
       ctx: ctx
@@ -21183,7 +21412,7 @@ var app = (function () {
     return block;
   }
 
-  function instance$f($$self, $$props, $$invalidate) {
+  function instance$g($$self, $$props, $$invalidate) {
     var _$$props$$$slots = $$props.$$slots,
         slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots,
         $$scope = $$props.$$scope;
@@ -21192,7 +21421,8 @@ var app = (function () {
     var map = leafletSrc.map(leafletSrc.DomUtil.create("div"), {
       center: [40.723, -73.961],
       zoom: 17
-    }); //set map to store. It needs to be accessed from other objects
+    });
+    setupMapPanes(map); //set map to store. It needs to be accessed from other objects
 
     count.set(map);
     var tileURL = 'https://api.mapbox.com/styles/v1/eichners/ckrkvjuaq9ovv17o7o8xaf6fh/tiles/256/{z}/{x}/{y}@2x?access_token=pk.eyJ1IjoiZWljaG5lcnMiLCJhIjoiY2lrZzVneDI4MDAyZ3VkbTZmYWlyejUzayJ9.vEGckM-D3AjV4jXmdibXyw';
@@ -21229,6 +21459,7 @@ var app = (function () {
         L: leafletSrc,
         onMount: onMount,
         count: count,
+        setupMapPanes: setupMapPanes,
         mapContainer: mapContainer,
         map: map,
         tileURL: tileURL
@@ -21251,7 +21482,7 @@ var app = (function () {
   var Map$1 = /*#__PURE__*/function (_SvelteComponentDev) {
     _inherits(Map, _SvelteComponentDev);
 
-    var _super = _createSuper$f(Map);
+    var _super = _createSuper$g(Map);
 
     function Map(options) {
       var _this;
@@ -21259,12 +21490,12 @@ var app = (function () {
       _classCallCheck(this, Map);
 
       _this = _super.call(this, options);
-      init(_assertThisInitialized(_this), options, instance$f, create_fragment$f, safe_not_equal, {});
+      init(_assertThisInitialized(_this), options, instance$g, create_fragment$g, safe_not_equal, {});
       dispatch_dev("SvelteRegisterComponent", {
         component: _assertThisInitialized(_this),
         tagName: "Map",
         options: options,
-        id: create_fragment$f.name
+        id: create_fragment$g.name
       });
       return _this;
     }
@@ -21272,12 +21503,12 @@ var app = (function () {
     return Map;
   }(SvelteComponentDev);
 
-  function _createSuper$e(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$e(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+  function _createSuper$f(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$f(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
 
-  function _isNativeReflectConstruct$e() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
-  var file$c = "src\\Button_Home.svelte";
+  function _isNativeReflectConstruct$f() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+  var file$d = "src\\Button_Home.svelte";
 
-  function create_fragment$e(ctx) {
+  function create_fragment$f(ctx) {
     var div;
     var span;
     var mounted;
@@ -21288,9 +21519,9 @@ var app = (function () {
         span = element("span");
         attr_dev(span, "class", "fa fa-home symbol-home svelte-y7a1bi");
         attr_dev(span, "aria-hidden", "true");
-        add_location(span, file$c, 25, 4, 541);
+        add_location(span, file$d, 22, 4, 445);
         attr_dev(div, "class", "homebutton svelte-y7a1bi");
-        add_location(div, file$c, 24, 0, 490);
+        add_location(div, file$d, 21, 0, 394);
       },
       l: function claim(nodes) {
         throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -21317,7 +21548,7 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_fragment$e.name,
+      id: create_fragment$f.name,
       type: "component",
       source: "",
       ctx: ctx
@@ -21325,7 +21556,7 @@ var app = (function () {
     return block;
   }
 
-  function instance$e($$self, $$props, $$invalidate) {
+  function instance$f($$self, $$props, $$invalidate) {
     var _$$props$$$slots = $$props.$$slots,
         slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots;
         $$props.$$scope;
@@ -21337,11 +21568,8 @@ var app = (function () {
     });
 
     function homeclick() {
-      //console.log( "momo" );
       map.setView([40.723, -73.961], 17);
-      dispatch('homebutton', {
-        text: 'Hello!'
-      });
+      dispatch('homebutton');
     }
 
     var writable_props = [];
@@ -21374,7 +21602,7 @@ var app = (function () {
   var Button_Home = /*#__PURE__*/function (_SvelteComponentDev) {
     _inherits(Button_Home, _SvelteComponentDev);
 
-    var _super = _createSuper$e(Button_Home);
+    var _super = _createSuper$f(Button_Home);
 
     function Button_Home(options) {
       var _this;
@@ -21382,12 +21610,12 @@ var app = (function () {
       _classCallCheck(this, Button_Home);
 
       _this = _super.call(this, options);
-      init(_assertThisInitialized(_this), options, instance$e, create_fragment$e, safe_not_equal, {});
+      init(_assertThisInitialized(_this), options, instance$f, create_fragment$f, safe_not_equal, {});
       dispatch_dev("SvelteRegisterComponent", {
         component: _assertThisInitialized(_this),
         tagName: "Button_Home",
         options: options,
-        id: create_fragment$e.name
+        id: create_fragment$f.name
       });
       return _this;
     }
@@ -21395,13 +21623,13 @@ var app = (function () {
     return Button_Home;
   }(SvelteComponentDev);
 
-  function _createSuper$d(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$d(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+  function _createSuper$e(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$e(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
 
-  function _isNativeReflectConstruct$d() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+  function _isNativeReflectConstruct$e() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
   var console_1$1 = globals.console;
-  var file$b = "src\\Button_Layer.svelte";
+  var file$c = "src\\Button_Layer.svelte";
 
-  function create_fragment$d(ctx) {
+  function create_fragment$e(ctx) {
     var div;
     var img;
     var img_src_value;
@@ -21412,11 +21640,11 @@ var app = (function () {
         div = element("div");
         img = element("img");
         attr_dev(img, "alt", "key");
-        if (!src_url_equal(img.src, img_src_value = "https://raw.githubusercontent.com/PrattSAVI/FBIP/main/public/img/key_icon.svg")) attr_dev(img, "src", img_src_value);
+        if (!src_url_equal(img.src, img_src_value = "https://raw.githubusercontent.com/cankadir/FBIP/refs/heads/2606-updates/public/img/key_icon.svg")) attr_dev(img, "src", img_src_value);
         attr_dev(img, "class", "svelte-g77cq0");
-        add_location(img, file$b, 31, 4, 832);
+        add_location(img, file$c, 31, 4, 832);
         attr_dev(div, "class", "homebutton svelte-g77cq0");
-        add_location(div, file$b, 30, 0, 779);
+        add_location(div, file$c, 30, 0, 779);
       },
       l: function claim(nodes) {
         throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -21441,7 +21669,7 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_fragment$d.name,
+      id: create_fragment$e.name,
       type: "component",
       source: "",
       ctx: ctx
@@ -21473,7 +21701,7 @@ var app = (function () {
     reverseViz();
   }
 
-  function instance$d($$self, $$props, $$invalidate) {
+  function instance$e($$self, $$props, $$invalidate) {
     var _$$props$$$slots = $$props.$$slots,
         slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots;
         $$props.$$scope;
@@ -21496,7 +21724,7 @@ var app = (function () {
   var Button_Layer = /*#__PURE__*/function (_SvelteComponentDev) {
     _inherits(Button_Layer, _SvelteComponentDev);
 
-    var _super = _createSuper$d(Button_Layer);
+    var _super = _createSuper$e(Button_Layer);
 
     function Button_Layer(options) {
       var _this;
@@ -21504,17 +21732,363 @@ var app = (function () {
       _classCallCheck(this, Button_Layer);
 
       _this = _super.call(this, options);
-      init(_assertThisInitialized(_this), options, instance$d, create_fragment$d, safe_not_equal, {});
+      init(_assertThisInitialized(_this), options, instance$e, create_fragment$e, safe_not_equal, {});
       dispatch_dev("SvelteRegisterComponent", {
         component: _assertThisInitialized(_this),
         tagName: "Button_Layer",
         options: options,
-        id: create_fragment$d.name
+        id: create_fragment$e.name
       });
       return _this;
     }
 
     return Button_Layer;
+  }(SvelteComponentDev);
+
+  function _createSuper$d(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$d(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+
+  function _isNativeReflectConstruct$d() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+
+  function create_fragment$d(ctx) {
+    var current;
+    var default_slot_template =
+    /*#slots*/
+    ctx[3].default;
+    var default_slot = create_slot(default_slot_template, ctx,
+    /*$$scope*/
+    ctx[2], null);
+    var block = {
+      c: function create() {
+        if (default_slot) default_slot.c();
+      },
+      l: function claim(nodes) {
+        throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
+      },
+      m: function mount(target, anchor) {
+        if (default_slot) {
+          default_slot.m(target, anchor);
+        }
+
+        current = true;
+      },
+      p: function update(ctx, _ref) {
+        var _ref2 = _slicedToArray(_ref, 1),
+            dirty = _ref2[0];
+
+        if (default_slot) {
+          if (default_slot.p && (!current || dirty &
+          /*$$scope*/
+          4)) {
+            update_slot_base(default_slot, default_slot_template, ctx,
+            /*$$scope*/
+            ctx[2], !current ? get_all_dirty_from_scope(
+            /*$$scope*/
+            ctx[2]) : get_slot_changes(default_slot_template,
+            /*$$scope*/
+            ctx[2], dirty, null), null);
+          }
+        }
+      },
+      i: function intro(local) {
+        if (current) return;
+        transition_in(default_slot, local);
+        current = true;
+      },
+      o: function outro(local) {
+        transition_out(default_slot, local);
+        current = false;
+      },
+      d: function destroy(detaching) {
+        if (default_slot) default_slot.d(detaching);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_fragment$d.name,
+      type: "component",
+      source: "",
+      ctx: ctx
+    });
+    return block;
+  }
+
+  function instance$d($$self, $$props, $$invalidate) {
+    var _$$props$$$slots = $$props.$$slots,
+        slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots,
+        $$scope = $$props.$$scope;
+    validate_slots('Geojson', slots, ['default']);
+    var dispatch = createEventDispatcher();
+    var geojson = $$props.geojson;
+    var _$$props$table = $$props.table,
+        table = _$$props$table === void 0 ? [] : _$$props$table;
+    var hatchLayer;
+    var previousActiveLayer;
+    var previousHatchLayer;
+    var activeOutlineLayer;
+    var map;
+    count.subscribe(function (value) {
+      map = value;
+    });
+
+    function findHatchLayer(feature) {
+      if (!hatchLayer) return null;
+      var bbl = normalizeBbl(feature.properties && feature.properties.BBL);
+      var match = null;
+      hatchLayer.eachLayer(function (layer) {
+        var layerBbl = normalizeBbl(layer.feature.properties && layer.feature.properties.BBL);
+        if (layerBbl === bbl) match = layer;
+      });
+      return match;
+    }
+
+    function clearSelection() {
+      if (previousActiveLayer && previousActiveLayer._savedStyle) {
+        previousActiveLayer.setStyle(previousActiveLayer._savedStyle);
+        previousActiveLayer._savedStyle = null;
+      }
+
+      previousActiveLayer = null;
+
+      if (previousHatchLayer) {
+        applyHatchFill(previousHatchLayer, false);
+        previousHatchLayer = null;
+      }
+
+      if (activeOutlineLayer) {
+        map.removeLayer(activeOutlineLayer);
+        activeOutlineLayer = null;
+      }
+
+      enforceMapLayerOrder(map);
+    }
+
+    function activePolygon(e) {
+      map.setView(e.target.getBounds().getCenter(), 17);
+      clearSelection();
+      var owner = e.target.feature.properties.Owner;
+      var layer = e.target;
+      layer._savedStyle = getParcelStyle(owner);
+      layer.setStyle({
+        fillColor: getSelectedFillColor(),
+        fillOpacity: 0.9
+      });
+      previousActiveLayer = layer;
+
+      if (isUndevelopedOwner(owner)) {
+        previousHatchLayer = findHatchLayer(layer.feature);
+        if (previousHatchLayer) applyHatchFill(previousHatchLayer, true);
+      } // Orange outline only (no fill) in selected pane — above hatch and borders
+
+
+      activeOutlineLayer = leafletSrc.geoJSON(e.target.feature, {
+        pane: mapPanes.selected,
+        interactive: false,
+        style: {
+          stroke: true,
+          color: '#F4B303',
+          weight: 4,
+          opacity: 1,
+          fill: false,
+          fillOpacity: 0
+        }
+      }).addTo(map);
+      enforceMapLayerOrder(map);
+      dispatch('message', {
+        active: e.target
+      });
+    }
+
+    function style(feature) {
+      return getParcelStyle(feature.properties.Owner);
+    }
+
+    function onEachFeature(feature, layer) {
+      if (feature.properties.Owner) {
+        layer.openTooltip();
+        layer.on({
+          click: activePolygon
+        });
+      }
+    }
+
+    var layer = leafletSrc.geoJSON(geojson, {
+      pane: mapPanes.parcels,
+      style: style,
+      onEachFeature: onEachFeature
+    }).addTo(map);
+    var undevelopedFeatures = getUndevelopedFeatures(geojson, table);
+
+    if (undevelopedFeatures.length > 0) {
+      hatchLayer = leafletSrc.geoJSON({
+        type: 'FeatureCollection',
+        features: undevelopedFeatures
+      }, {
+        pane: mapPanes.hatch,
+        style: getHatchOverlayStyle,
+        interactive: false
+      }).addTo(map);
+      hatchLayer.eachLayer(function (polygon) {
+        applyHatchFill(polygon);
+      });
+      addCrossHatchPattern(map, mapPanes.hatch);
+    }
+
+    layer.eachLayer(function (polygon) {
+      var owner = polygon.feature.properties.Owner;
+      var bbl = normalizeBbl(polygon.feature.properties.BBL);
+
+      if (!owner || owner === '') {
+        polygon._path.id = String(polygon.feature.properties.Block) + String(polygon.feature.properties.Lot) + ' outside';
+      } else {
+        polygon._path.id = bbl + ' bip';
+      }
+    });
+    mapActions.resetSelection = clearSelection;
+    enforceMapLayerOrder(map);
+    mapLabels.forEach(function (_ref3) {
+      var lat = _ref3.lat,
+          lon = _ref3.lon,
+          label = _ref3.label;
+      return addLabel2(map, lat, lon, label);
+    });
+    map.on('zoomend', function () {
+      var zoomLevel = map.getZoom();
+
+      if (zoomLevel < 17) {
+        [].forEach.call(document.querySelectorAll('.map-labels'), function (el) {
+          if (el.innerHTML !== 'BUSHWICK INLET&nbsp;PARK') {
+            el.style.visibility = 'hidden';
+          } else {
+            el.style.visibility = 'visible';
+          }
+        });
+      } else {
+        [].forEach.call(document.querySelectorAll('.map-labels'), function (el) {
+          if (el.innerHTML !== 'BUSHWICK INLET&nbsp;PARK') {
+            el.style.visibility = 'visible';
+          } else {
+            el.style.visibility = 'hidden';
+          }
+        });
+      }
+    });
+    var writable_props = ['geojson', 'table'];
+    Object.keys($$props).forEach(function (key) {
+      if (!~writable_props.indexOf(key) && key.slice(0, 2) !== '$$' && key !== 'slot') console.warn("<Geojson> was created with unknown prop '".concat(key, "'"));
+    });
+
+    $$self.$$set = function ($$props) {
+      if ('geojson' in $$props) $$invalidate(0, geojson = $$props.geojson);
+      if ('table' in $$props) $$invalidate(1, table = $$props.table);
+      if ('$$scope' in $$props) $$invalidate(2, $$scope = $$props.$$scope);
+    };
+
+    $$self.$capture_state = function () {
+      return {
+        L: L$1,
+        count: count,
+        mapLabels: mapLabels,
+        mapActions: mapActions,
+        addLabel2: addLabel2,
+        getUndevelopedFeatures: getUndevelopedFeatures,
+        addCrossHatchPattern: addCrossHatchPattern,
+        applyHatchFill: applyHatchFill,
+        getHatchOverlayStyle: getHatchOverlayStyle,
+        mapPanes: mapPanes,
+        isUndevelopedOwner: isUndevelopedOwner,
+        enforceMapLayerOrder: enforceMapLayerOrder,
+        getParcelStyle: getParcelStyle,
+        getSelectedFillColor: getSelectedFillColor,
+        normalizeBbl: normalizeBbl,
+        createEventDispatcher: createEventDispatcher,
+        dispatch: dispatch,
+        geojson: geojson,
+        table: table,
+        hatchLayer: hatchLayer,
+        previousActiveLayer: previousActiveLayer,
+        previousHatchLayer: previousHatchLayer,
+        activeOutlineLayer: activeOutlineLayer,
+        map: map,
+        findHatchLayer: findHatchLayer,
+        clearSelection: clearSelection,
+        activePolygon: activePolygon,
+        style: style,
+        onEachFeature: onEachFeature,
+        layer: layer,
+        undevelopedFeatures: undevelopedFeatures
+      };
+    };
+
+    $$self.$inject_state = function ($$props) {
+      if ('geojson' in $$props) $$invalidate(0, geojson = $$props.geojson);
+      if ('table' in $$props) $$invalidate(1, table = $$props.table);
+      if ('hatchLayer' in $$props) hatchLayer = $$props.hatchLayer;
+      if ('previousActiveLayer' in $$props) previousActiveLayer = $$props.previousActiveLayer;
+      if ('previousHatchLayer' in $$props) previousHatchLayer = $$props.previousHatchLayer;
+      if ('activeOutlineLayer' in $$props) activeOutlineLayer = $$props.activeOutlineLayer;
+      if ('map' in $$props) map = $$props.map;
+      if ('undevelopedFeatures' in $$props) undevelopedFeatures = $$props.undevelopedFeatures;
+    };
+
+    if ($$props && "$$inject" in $$props) {
+      $$self.$inject_state($$props.$$inject);
+    }
+
+    return [geojson, table, $$scope, slots];
+  }
+
+  var Geojson = /*#__PURE__*/function (_SvelteComponentDev) {
+    _inherits(Geojson, _SvelteComponentDev);
+
+    var _super = _createSuper$d(Geojson);
+
+    function Geojson(options) {
+      var _this;
+
+      _classCallCheck(this, Geojson);
+
+      _this = _super.call(this, options);
+      init(_assertThisInitialized(_this), options, instance$d, create_fragment$d, safe_not_equal, {
+        geojson: 0,
+        table: 1
+      });
+      dispatch_dev("SvelteRegisterComponent", {
+        component: _assertThisInitialized(_this),
+        tagName: "Geojson",
+        options: options,
+        id: create_fragment$d.name
+      });
+      var ctx = _this.$$.ctx;
+      var props = options.props || {};
+
+      if (
+      /*geojson*/
+      ctx[0] === undefined && !('geojson' in props)) {
+        console.warn("<Geojson> was created without expected prop 'geojson'");
+      }
+
+      return _this;
+    }
+
+    _createClass(Geojson, [{
+      key: "geojson",
+      get: function get() {
+        throw new Error("<Geojson>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+      },
+      set: function set(value) {
+        throw new Error("<Geojson>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+      }
+    }, {
+      key: "table",
+      get: function get() {
+        throw new Error("<Geojson>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+      },
+      set: function set(value) {
+        throw new Error("<Geojson>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+      }
+    }]);
+
+    return Geojson;
   }(SvelteComponentDev);
 
   function _createSuper$c(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$c(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
@@ -21584,287 +22158,6 @@ var app = (function () {
     return block;
   }
 
-  function getColor(d) {
-    return d === "other" ? "var(--stateColor)" : d === "bip" ? "var(--parkColor)" : d === "" ? "FFFFFF" : '#FFFFFF';
-  }
-
-  function LineColor(d) {
-    return d === "other" ? "white" : d === "bip" ? "white" : d === "" ? "black" : '#000000';
-  }
-
-  function lineWeight(d) {
-    return d === "other" ? 0.8 : d === "bip" ? 0.8 : d === "" ? .5 : .5;
-  } // 1.BIP Lot STYLE
-
-
-  function style$1(feature) {
-    return {
-      fillColor: getColor(feature.properties.Owner),
-      color: LineColor(feature.properties.Owner),
-      fillOpacity: 0.9,
-      weight: lineWeight(feature.properties.Owner),
-      opacity: 0.9
-    };
-  }
-
-  function instance$c($$self, $$props, $$invalidate) {
-    var _$$props$$$slots = $$props.$$slots,
-        slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots,
-        $$scope = $$props.$$scope;
-    validate_slots('Geojson', slots, ['default']);
-    var dispatch = createEventDispatcher();
-    var geojson = $$props.geojson; //countValue is map object stored in the store.js
-
-    var map;
-    count.subscribe(function (value) {
-      map = value;
-    }); //Zoom to active polygon and write id to store.
-
-    function activePolygon(e) {
-      map.setView(e.target.getBounds().getCenter(), 17); //Set an active class to clicked Element
-
-      var active = _toConsumableArray(document.getElementsByClassName("active"));
-
-      if (active.length > 0) {
-        //If an element is selected
-        active.forEach(function (feature) {
-          feature.className.baseVal = 'leaflet-interactive'; //Set it back to leaflet
-        });
-      } //Bring all polygons, (layer) back so that the border is visible
-
-
-      layer.bringToBack();
-      e.target._path.className.baseVal = e.target._path.className.baseVal + " active";
-      e.target.bringToFront(); //Send active ID out
-
-      dispatch('message', {
-        active: e.target
-      });
-    }
-
-    function onEachFeature(feature, layer) {
-      //Only bind popup if Owner Column is not empty
-      if (feature.properties.Owner) {
-        layer.openTooltip();
-        layer.on({
-          click: activePolygon
-        });
-      }
-    }
-
-    var layer = leafletSrc.geoJSON(geojson, {
-      style: style$1,
-      onEachFeature: onEachFeature
-    }).addTo(map); // Assign a seperate ID for park and outside elements. 
-
-    layer.eachLayer(function (polygon) {
-      var filler = polygon._path.attributes.fill.value; //Assign unique IDs to each polygon
-
-      if (filler === "#FFFFFF") {
-        polygon._path.id = String(polygon.feature.properties.Block) + String(polygon.feature.properties.Lot) + " outside";
-      } else {
-        polygon._path.id = String(polygon.feature.properties.Block) + String(polygon.feature.properties.Lot) + " bip";
-      }
-    });
-
-    function addLabel2(lat, lon, label) {
-      var myIcon = leafletSrc.divIcon({
-        className: 'map-labels',
-        html: label
-      }); // you can set .my-div-icon styles in CSS
-
-      leafletSrc.marker([lat, lon], {
-        icon: myIcon
-      }).addTo(map);
-    } //Create labels in specific locations. 
-    //Bushwick Inlet label is at the Border file. 
-
-
-    addLabel2(40.7216, -73.9624, "Marsha&nbsp;P. Johnson State&nbsp;Park");
-    addLabel2(40.72430238, -73.95974738, "Bayside");
-    addLabel2(40.7233, -73.9599, "50&nbsp;Kent");
-    addLabel2(40.72589720, -73.9612948, "Monitor&nbsp;Museum");
-    addLabel2(40.72586, -73.9591, "40&nbsp;Quay");
-    addLabel2(40.72525, -73.9581, "Motiva");
-    addLabel2(40.72331325, -73.96132996, "CitiStorage");
-    addLabel2(40.72234, -73.9616, "86&nbsp;Kent");
-    addLabel2(40.7235, -73.961, "BUSHWICK INLET&nbsp;PARK"); //Hide tooltips based on zoom level. Currently This is set to 17
-
-    map.on('zoomend', function (e) {
-      var zoomLevel = map.getZoom();
-
-      if (zoomLevel < 17) {
-        [].forEach.call(document.querySelectorAll('.map-labels'), function (el) {
-          //Bushwick Inlet Label works reverse
-          if (el.innerHTML !== "BUSHWICK INLET&nbsp;PARK") {
-            el.style.visibility = 'hidden';
-          } else {
-            el.style.visibility = 'visible';
-          }
-        });
-      } else {
-        [].forEach.call(document.querySelectorAll('.map-labels'), function (el) {
-          if (el.innerHTML !== "BUSHWICK INLET&nbsp;PARK") {
-            el.style.visibility = 'visible';
-          } else {
-            el.style.visibility = 'hidden';
-          }
-        });
-      }
-    });
-    var writable_props = ['geojson'];
-    Object.keys($$props).forEach(function (key) {
-      if (!~writable_props.indexOf(key) && key.slice(0, 2) !== '$$' && key !== 'slot') console.warn("<Geojson> was created with unknown prop '".concat(key, "'"));
-    });
-
-    $$self.$$set = function ($$props) {
-      if ('geojson' in $$props) $$invalidate(0, geojson = $$props.geojson);
-      if ('$$scope' in $$props) $$invalidate(1, $$scope = $$props.$$scope);
-    };
-
-    $$self.$capture_state = function () {
-      return {
-        L: L$1,
-        count: count,
-        createEventDispatcher: createEventDispatcher,
-        dispatch: dispatch,
-        geojson: geojson,
-        map: map,
-        activePolygon: activePolygon,
-        getColor: getColor,
-        LineColor: LineColor,
-        lineWeight: lineWeight,
-        style: style$1,
-        onEachFeature: onEachFeature,
-        layer: layer,
-        addLabel2: addLabel2
-      };
-    };
-
-    $$self.$inject_state = function ($$props) {
-      if ('geojson' in $$props) $$invalidate(0, geojson = $$props.geojson);
-      if ('map' in $$props) map = $$props.map;
-    };
-
-    if ($$props && "$$inject" in $$props) {
-      $$self.$inject_state($$props.$$inject);
-    }
-
-    return [geojson, $$scope, slots];
-  }
-
-  var Geojson = /*#__PURE__*/function (_SvelteComponentDev) {
-    _inherits(Geojson, _SvelteComponentDev);
-
-    var _super = _createSuper$c(Geojson);
-
-    function Geojson(options) {
-      var _this;
-
-      _classCallCheck(this, Geojson);
-
-      _this = _super.call(this, options);
-      init(_assertThisInitialized(_this), options, instance$c, create_fragment$c, safe_not_equal, {
-        geojson: 0
-      });
-      dispatch_dev("SvelteRegisterComponent", {
-        component: _assertThisInitialized(_this),
-        tagName: "Geojson",
-        options: options,
-        id: create_fragment$c.name
-      });
-      var ctx = _this.$$.ctx;
-      var props = options.props || {};
-
-      if (
-      /*geojson*/
-      ctx[0] === undefined && !('geojson' in props)) {
-        console.warn("<Geojson> was created without expected prop 'geojson'");
-      }
-
-      return _this;
-    }
-
-    _createClass(Geojson, [{
-      key: "geojson",
-      get: function get() {
-        throw new Error("<Geojson>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
-      },
-      set: function set(value) {
-        throw new Error("<Geojson>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
-      }
-    }]);
-
-    return Geojson;
-  }(SvelteComponentDev);
-
-  function _createSuper$b(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$b(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
-
-  function _isNativeReflectConstruct$b() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
-
-  function create_fragment$b(ctx) {
-    var current;
-    var default_slot_template =
-    /*#slots*/
-    ctx[2].default;
-    var default_slot = create_slot(default_slot_template, ctx,
-    /*$$scope*/
-    ctx[1], null);
-    var block = {
-      c: function create() {
-        if (default_slot) default_slot.c();
-      },
-      l: function claim(nodes) {
-        throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
-      },
-      m: function mount(target, anchor) {
-        if (default_slot) {
-          default_slot.m(target, anchor);
-        }
-
-        current = true;
-      },
-      p: function update(ctx, _ref) {
-        var _ref2 = _slicedToArray(_ref, 1),
-            dirty = _ref2[0];
-
-        if (default_slot) {
-          if (default_slot.p && (!current || dirty &
-          /*$$scope*/
-          2)) {
-            update_slot_base(default_slot, default_slot_template, ctx,
-            /*$$scope*/
-            ctx[1], !current ? get_all_dirty_from_scope(
-            /*$$scope*/
-            ctx[1]) : get_slot_changes(default_slot_template,
-            /*$$scope*/
-            ctx[1], dirty, null), null);
-          }
-        }
-      },
-      i: function intro(local) {
-        if (current) return;
-        transition_in(default_slot, local);
-        current = true;
-      },
-      o: function outro(local) {
-        transition_out(default_slot, local);
-        current = false;
-      },
-      d: function destroy(detaching) {
-        if (default_slot) default_slot.d(detaching);
-      }
-    };
-    dispatch_dev("SvelteRegisterBlock", {
-      block: block,
-      id: create_fragment$b.name,
-      type: "component",
-      source: "",
-      ctx: ctx
-    });
-    return block;
-  }
-
   function styleBehind(feature) {
     return {
       color: "white",
@@ -21882,7 +22175,7 @@ var app = (function () {
     };
   }
 
-  function instance$b($$self, $$props, $$invalidate) {
+  function instance$c($$self, $$props, $$invalidate) {
     var _$$props$$$slots = $$props.$$slots,
         slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots,
         $$scope = $$props.$$scope;
@@ -21894,10 +22187,14 @@ var app = (function () {
       map = value;
     });
     var layerBehind = leafletSrc.geoJSON(geojson, {
-      style: styleBehind
+      pane: mapPanes.borderWhite,
+      style: styleBehind,
+      interactive: false
     }).addTo(map);
     var layer = leafletSrc.geoJSON(geojson, {
-      style: style
+      pane: mapPanes.borderDash,
+      style: style,
+      interactive: false
     }).addTo(map); // Assign a seperate ID for park and outside elements. 
 
     layer.eachLayer(function (polygon) {
@@ -21932,6 +22229,7 @@ var app = (function () {
       return {
         L: L$1,
         count: count,
+        mapPanes: mapPanes,
         afterUpdate: afterUpdate,
         geojson: geojson,
         map: map,
@@ -21957,7 +22255,7 @@ var app = (function () {
   var GeojsonBorder = /*#__PURE__*/function (_SvelteComponentDev) {
     _inherits(GeojsonBorder, _SvelteComponentDev);
 
-    var _super = _createSuper$b(GeojsonBorder);
+    var _super = _createSuper$c(GeojsonBorder);
 
     function GeojsonBorder(options) {
       var _this;
@@ -21965,14 +22263,14 @@ var app = (function () {
       _classCallCheck(this, GeojsonBorder);
 
       _this = _super.call(this, options);
-      init(_assertThisInitialized(_this), options, instance$b, create_fragment$b, safe_not_equal, {
+      init(_assertThisInitialized(_this), options, instance$c, create_fragment$c, safe_not_equal, {
         geojson: 0
       });
       dispatch_dev("SvelteRegisterComponent", {
         component: _assertThisInitialized(_this),
         tagName: "GeojsonBorder",
         options: options,
-        id: create_fragment$b.name
+        id: create_fragment$c.name
       });
       var ctx = _this.$$.ctx;
       var props = options.props || {};
@@ -22227,12 +22525,12 @@ var app = (function () {
     };
   }
 
-  function _createSuper$a(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$a(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+  function _createSuper$b(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$b(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
 
-  function _isNativeReflectConstruct$a() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
-  var file$a = "node_modules\\svelte-carousel\\src\\components\\Dot\\Dot.svelte";
+  function _isNativeReflectConstruct$b() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+  var file$b = "node_modules\\svelte-carousel\\src\\components\\Dot\\Dot.svelte";
 
-  function create_fragment$a(ctx) {
+  function create_fragment$b(ctx) {
     var div;
     var mounted;
     var dispose;
@@ -22243,7 +22541,7 @@ var app = (function () {
         toggle_class(div, "sc-carousel-dot__dot_active",
         /*active*/
         ctx[0]);
-        add_location(div, file$a, 7, 0, 99);
+        add_location(div, file$b, 7, 0, 99);
       },
       l: function claim(nodes) {
         throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -22280,7 +22578,7 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_fragment$a.name,
+      id: create_fragment$b.name,
       type: "component",
       source: "",
       ctx: ctx
@@ -22288,7 +22586,7 @@ var app = (function () {
     return block;
   }
 
-  function instance$a($$self, $$props, $$invalidate) {
+  function instance$b($$self, $$props, $$invalidate) {
     var _$$props$$$slots = $$props.$$slots,
         slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots;
         $$props.$$scope;
@@ -22328,7 +22626,7 @@ var app = (function () {
   var Dot = /*#__PURE__*/function (_SvelteComponentDev) {
     _inherits(Dot, _SvelteComponentDev);
 
-    var _super = _createSuper$a(Dot);
+    var _super = _createSuper$b(Dot);
 
     function Dot(options) {
       var _this;
@@ -22336,14 +22634,14 @@ var app = (function () {
       _classCallCheck(this, Dot);
 
       _this = _super.call(this, options);
-      init(_assertThisInitialized(_this), options, instance$a, create_fragment$a, safe_not_equal, {
+      init(_assertThisInitialized(_this), options, instance$b, create_fragment$b, safe_not_equal, {
         active: 0
       });
       dispatch_dev("SvelteRegisterComponent", {
         component: _assertThisInitialized(_this),
         tagName: "Dot",
         options: options,
-        id: create_fragment$a.name
+        id: create_fragment$b.name
       });
       return _this;
     }
@@ -22361,12 +22659,12 @@ var app = (function () {
     return Dot;
   }(SvelteComponentDev);
 
-  function _createSuper$9(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$9(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+  function _createSuper$a(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$a(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
 
-  function _isNativeReflectConstruct$9() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
-  var file$9 = "node_modules\\svelte-carousel\\src\\components\\Dots\\Dots.svelte";
+  function _isNativeReflectConstruct$a() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+  var file$a = "node_modules\\svelte-carousel\\src\\components\\Dots\\Dots.svelte";
 
-  function get_each_context$1(ctx, list, i) {
+  function get_each_context$3(ctx, list, i) {
     var child_ctx = ctx.slice();
     child_ctx[5] = list[i];
     child_ctx[7] = i;
@@ -22374,7 +22672,7 @@ var app = (function () {
   } // (23:2) {#each Array(pagesCount) as _, pageIndex (pageIndex)}
 
 
-  function create_each_block$1(key_1, ctx) {
+  function create_each_block$3(key_1, ctx) {
     var div;
     var dot;
     var t;
@@ -22408,7 +22706,7 @@ var app = (function () {
         create_component(dot.$$.fragment);
         t = space();
         attr_dev(div, "class", "sc-carousel-dots__dot-container svelte-1oj5bge");
-        add_location(div, file$9, 23, 4, 515);
+        add_location(div, file$a, 23, 4, 515);
         this.first = div;
       },
       m: function mount(target, anchor) {
@@ -22445,7 +22743,7 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_each_block$1.name,
+      id: create_each_block$3.name,
       type: "each",
       source: "(23:2) {#each Array(pagesCount) as _, pageIndex (pageIndex)}",
       ctx: ctx
@@ -22453,7 +22751,7 @@ var app = (function () {
     return block;
   }
 
-  function create_fragment$9(ctx) {
+  function create_fragment$a(ctx) {
     var div;
     var each_blocks = [];
     var each_1_lookup = new Map();
@@ -22470,12 +22768,12 @@ var app = (function () {
       );
     };
 
-    validate_each_keys(ctx, each_value, get_each_context$1, get_key);
+    validate_each_keys(ctx, each_value, get_each_context$3, get_key);
 
     for (var i = 0; i < each_value.length; i += 1) {
-      var child_ctx = get_each_context$1(ctx, each_value, i);
+      var child_ctx = get_each_context$3(ctx, each_value, i);
       var key = get_key(child_ctx);
-      each_1_lookup.set(key, each_blocks[i] = create_each_block$1(key, child_ctx));
+      each_1_lookup.set(key, each_blocks[i] = create_each_block$3(key, child_ctx));
     }
 
     var block = {
@@ -22487,7 +22785,7 @@ var app = (function () {
         }
 
         attr_dev(div, "class", "sc-carousel-dots__container svelte-1oj5bge");
-        add_location(div, file$9, 21, 0, 411);
+        add_location(div, file$a, 21, 0, 411);
       },
       l: function claim(nodes) {
         throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -22513,8 +22811,8 @@ var app = (function () {
           ctx[0]);
           validate_each_argument(each_value);
           group_outros();
-          validate_each_keys(ctx, each_value, get_each_context$1, get_key);
-          each_blocks = update_keyed_each(each_blocks, dirty, get_key, 1, ctx, each_value, each_1_lookup, div, outro_and_destroy_block, create_each_block$1, null, get_each_context$1);
+          validate_each_keys(ctx, each_value, get_each_context$3, get_key);
+          each_blocks = update_keyed_each(each_blocks, dirty, get_key, 1, ctx, each_value, each_1_lookup, div, outro_and_destroy_block, create_each_block$3, null, get_each_context$3);
           check_outros();
         }
       },
@@ -22544,7 +22842,7 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_fragment$9.name,
+      id: create_fragment$a.name,
       type: "component",
       source: "",
       ctx: ctx
@@ -22552,7 +22850,7 @@ var app = (function () {
     return block;
   }
 
-  function instance$9($$self, $$props, $$invalidate) {
+  function instance$a($$self, $$props, $$invalidate) {
     var _$$props$$$slots = $$props.$$slots,
         slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots;
         $$props.$$scope;
@@ -22607,7 +22905,7 @@ var app = (function () {
   var Dots = /*#__PURE__*/function (_SvelteComponentDev) {
     _inherits(Dots, _SvelteComponentDev);
 
-    var _super = _createSuper$9(Dots);
+    var _super = _createSuper$a(Dots);
 
     function Dots(options) {
       var _this;
@@ -22615,7 +22913,7 @@ var app = (function () {
       _classCallCheck(this, Dots);
 
       _this = _super.call(this, options);
-      init(_assertThisInitialized(_this), options, instance$9, create_fragment$9, safe_not_equal, {
+      init(_assertThisInitialized(_this), options, instance$a, create_fragment$a, safe_not_equal, {
         pagesCount: 0,
         currentPageIndex: 1
       });
@@ -22623,7 +22921,7 @@ var app = (function () {
         component: _assertThisInitialized(_this),
         tagName: "Dots",
         options: options,
-        id: create_fragment$9.name
+        id: create_fragment$a.name
       });
       return _this;
     }
@@ -22652,12 +22950,12 @@ var app = (function () {
   var PREV = 'prev';
   var NEXT = 'next';
 
-  function _createSuper$8(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$8(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+  function _createSuper$9(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$9(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
 
-  function _isNativeReflectConstruct$8() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
-  var file$8 = "node_modules\\svelte-carousel\\src\\components\\Arrow\\Arrow.svelte";
+  function _isNativeReflectConstruct$9() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+  var file$9 = "node_modules\\svelte-carousel\\src\\components\\Arrow\\Arrow.svelte";
 
-  function create_fragment$8(ctx) {
+  function create_fragment$9(ctx) {
     var div;
     var i;
     var mounted;
@@ -22673,12 +22971,12 @@ var app = (function () {
         toggle_class(i, "sc-carousel-arrow__arrow-prev",
         /*direction*/
         ctx[0] === PREV);
-        add_location(i, file$8, 19, 2, 371);
+        add_location(i, file$9, 19, 2, 371);
         attr_dev(div, "class", "sc-carousel-arrow__circle svelte-9ztt4p");
         toggle_class(div, "sc-carousel-arrow__circle_disabled",
         /*disabled*/
         ctx[1]);
-        add_location(div, file$8, 14, 0, 256);
+        add_location(div, file$9, 14, 0, 256);
       },
       l: function claim(nodes) {
         throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -22732,7 +23030,7 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_fragment$8.name,
+      id: create_fragment$9.name,
       type: "component",
       source: "",
       ctx: ctx
@@ -22740,7 +23038,7 @@ var app = (function () {
     return block;
   }
 
-  function instance$8($$self, $$props, $$invalidate) {
+  function instance$9($$self, $$props, $$invalidate) {
     var _$$props$$$slots = $$props.$$slots,
         slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots;
         $$props.$$scope;
@@ -22787,7 +23085,7 @@ var app = (function () {
   var Arrow = /*#__PURE__*/function (_SvelteComponentDev) {
     _inherits(Arrow, _SvelteComponentDev);
 
-    var _super = _createSuper$8(Arrow);
+    var _super = _createSuper$9(Arrow);
 
     function Arrow(options) {
       var _this;
@@ -22795,7 +23093,7 @@ var app = (function () {
       _classCallCheck(this, Arrow);
 
       _this = _super.call(this, options);
-      init(_assertThisInitialized(_this), options, instance$8, create_fragment$8, safe_not_equal, {
+      init(_assertThisInitialized(_this), options, instance$9, create_fragment$9, safe_not_equal, {
         direction: 0,
         disabled: 1
       });
@@ -22803,7 +23101,7 @@ var app = (function () {
         component: _assertThisInitialized(_this),
         tagName: "Arrow",
         options: options,
-        id: create_fragment$8.name
+        id: create_fragment$9.name
       });
       return _this;
     }
@@ -22829,12 +23127,12 @@ var app = (function () {
     return Arrow;
   }(SvelteComponentDev);
 
-  function _createSuper$7(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$7(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+  function _createSuper$8(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$8(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
 
-  function _isNativeReflectConstruct$7() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
-  var file$7 = "node_modules\\svelte-carousel\\src\\components\\Progress\\Progress.svelte";
+  function _isNativeReflectConstruct$8() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+  var file$8 = "node_modules\\svelte-carousel\\src\\components\\Progress\\Progress.svelte";
 
-  function create_fragment$7(ctx) {
+  function create_fragment$8(ctx) {
     var div;
     var block = {
       c: function create() {
@@ -22843,7 +23141,7 @@ var app = (function () {
         set_style(div, "width",
         /*width*/
         ctx[0] + "%");
-        add_location(div, file$7, 11, 0, 192);
+        add_location(div, file$8, 11, 0, 192);
       },
       l: function claim(nodes) {
         throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -22871,7 +23169,7 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_fragment$7.name,
+      id: create_fragment$8.name,
       type: "component",
       source: "",
       ctx: ctx
@@ -22881,7 +23179,7 @@ var app = (function () {
 
   var MAX_PERCENT = 100;
 
-  function instance$7($$self, $$props, $$invalidate) {
+  function instance$8($$self, $$props, $$invalidate) {
     var width;
     var _$$props$$$slots = $$props.$$slots,
         slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots;
@@ -22929,7 +23227,7 @@ var app = (function () {
   var Progress = /*#__PURE__*/function (_SvelteComponentDev) {
     _inherits(Progress, _SvelteComponentDev);
 
-    var _super = _createSuper$7(Progress);
+    var _super = _createSuper$8(Progress);
 
     function Progress(options) {
       var _this;
@@ -22937,14 +23235,14 @@ var app = (function () {
       _classCallCheck(this, Progress);
 
       _this = _super.call(this, options);
-      init(_assertThisInitialized(_this), options, instance$7, create_fragment$7, safe_not_equal, {
+      init(_assertThisInitialized(_this), options, instance$8, create_fragment$8, safe_not_equal, {
         value: 1
       });
       dispatch_dev("SvelteRegisterComponent", {
         component: _assertThisInitialized(_this),
         tagName: "Progress",
         options: options,
-        id: create_fragment$7.name
+        id: create_fragment$8.name
       });
       return _this;
     }
@@ -23620,11 +23918,11 @@ var app = (function () {
     return ProgressManager;
   }();
 
-  function _createSuper$6(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$6(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+  function _createSuper$7(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$7(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
 
-  function _isNativeReflectConstruct$6() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+  function _isNativeReflectConstruct$7() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
   var Error_1 = globals.Error;
-  var file$6 = "node_modules\\svelte-carousel\\src\\components\\Carousel\\Carousel.svelte";
+  var file$7 = "node_modules\\svelte-carousel\\src\\components\\Carousel\\Carousel.svelte";
 
   var get_dots_slot_changes = function get_dots_slot_changes(dirty) {
     return {
@@ -23802,7 +24100,7 @@ var app = (function () {
         div = element("div");
         create_component(arrow.$$.fragment);
         attr_dev(div, "class", "sc-carousel__arrow-container svelte-h7bw08");
-        add_location(div, file$6, 355, 8, 8863);
+        add_location(div, file$7, 355, 8, 8863);
       },
       m: function mount(target, anchor) {
         insert_dev(target, div, anchor);
@@ -23845,7 +24143,7 @@ var app = (function () {
   } // (392:6) {#if autoplayProgressVisible}
 
 
-  function create_if_block_2$2(ctx) {
+  function create_if_block_2$4(ctx) {
     var div;
     var progress;
     var current;
@@ -23862,7 +24160,7 @@ var app = (function () {
         div = element("div");
         create_component(progress.$$.fragment);
         attr_dev(div, "class", "sc-carousel-progress__container svelte-h7bw08");
-        add_location(div, file$6, 392, 8, 10002);
+        add_location(div, file$7, 392, 8, 10002);
       },
       m: function mount(target, anchor) {
         insert_dev(target, div, anchor);
@@ -23894,7 +24192,7 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_if_block_2$2.name,
+      id: create_if_block_2$4.name,
       type: "if",
       source: "(392:6) {#if autoplayProgressVisible}",
       ctx: ctx
@@ -23903,7 +24201,7 @@ var app = (function () {
   } // (398:4) {#if arrows}
 
 
-  function create_if_block_1$2(ctx) {
+  function create_if_block_1$4(ctx) {
     var current;
     var next_slot_template =
     /*#slots*/
@@ -23961,7 +24259,7 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_if_block_1$2.name,
+      id: create_if_block_1$4.name,
       type: "if",
       source: "(398:4) {#if arrows}",
       ctx: ctx
@@ -23995,7 +24293,7 @@ var app = (function () {
         div = element("div");
         create_component(arrow.$$.fragment);
         attr_dev(div, "class", "sc-carousel__arrow-container svelte-h7bw08");
-        add_location(div, file$6, 399, 8, 10203);
+        add_location(div, file$7, 399, 8, 10203);
       },
       m: function mount(target, anchor) {
         insert_dev(target, div, anchor);
@@ -24040,7 +24338,7 @@ var app = (function () {
   } // (410:2) {#if dots}
 
 
-  function create_if_block$3(ctx) {
+  function create_if_block$5(ctx) {
     var current;
     var dots_slot_template =
     /*#slots*/
@@ -24098,7 +24396,7 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_if_block$3.name,
+      id: create_if_block$5.name,
       type: "if",
       source: "(410:2) {#if dots}",
       ctx: ctx
@@ -24169,7 +24467,7 @@ var app = (function () {
     return block;
   }
 
-  function create_fragment$6(ctx) {
+  function create_fragment$7(ctx) {
     var div3;
     var div2;
     var t0;
@@ -24193,13 +24491,13 @@ var app = (function () {
     ctx[37], get_default_slot_context);
     var if_block1 =
     /*autoplayProgressVisible*/
-    ctx[3] && create_if_block_2$2(ctx);
+    ctx[3] && create_if_block_2$4(ctx);
     var if_block2 =
     /*arrows*/
-    ctx[1] && create_if_block_1$2(ctx);
+    ctx[1] && create_if_block_1$4(ctx);
     var if_block3 =
     /*dots*/
-    ctx[4] && create_if_block$3(ctx);
+    ctx[4] && create_if_block$5(ctx);
     var block = {
       c: function create() {
         div3 = element("div");
@@ -24225,13 +24523,13 @@ var app = (function () {
         set_style(div0, "transition-timing-function",
         /*timingFunction*/
         ctx[0]);
-        add_location(div0, file$6, 374, 6, 9333);
+        add_location(div0, file$7, 374, 6, 9333);
         attr_dev(div1, "class", "sc-carousel__pages-window svelte-h7bw08");
-        add_location(div1, file$6, 364, 4, 9125);
+        add_location(div1, file$7, 364, 4, 9125);
         attr_dev(div2, "class", "sc-carousel__content-container svelte-h7bw08");
-        add_location(div2, file$6, 352, 2, 8750);
+        add_location(div2, file$7, 352, 2, 8750);
         attr_dev(div3, "class", "sc-carousel__carousel-container svelte-h7bw08");
-        add_location(div3, file$6, 351, 0, 8701);
+        add_location(div3, file$7, 351, 0, 8701);
       },
       l: function claim(nodes) {
         throw new Error_1("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -24371,7 +24669,7 @@ var app = (function () {
               transition_in(if_block1, 1);
             }
           } else {
-            if_block1 = create_if_block_2$2(ctx);
+            if_block1 = create_if_block_2$4(ctx);
             if_block1.c();
             transition_in(if_block1, 1);
             if_block1.m(div1, null);
@@ -24396,7 +24694,7 @@ var app = (function () {
               transition_in(if_block2, 1);
             }
           } else {
-            if_block2 = create_if_block_1$2(ctx);
+            if_block2 = create_if_block_1$4(ctx);
             if_block2.c();
             transition_in(if_block2, 1);
             if_block2.m(div2, null);
@@ -24421,7 +24719,7 @@ var app = (function () {
               transition_in(if_block3, 1);
             }
           } else {
-            if_block3 = create_if_block$3(ctx);
+            if_block3 = create_if_block$5(ctx);
             if_block3.c();
             transition_in(if_block3, 1);
             if_block3.m(div3, null);
@@ -24470,7 +24768,7 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_fragment$6.name,
+      id: create_fragment$7.name,
       type: "component",
       source: "",
       ctx: ctx
@@ -24478,7 +24776,7 @@ var app = (function () {
     return block;
   }
 
-  function instance$6($$self, $$props, $$invalidate) {
+  function instance$7($$self, $$props, $$invalidate) {
     var _autoplayDirectionFnD, _directionFnDescripti;
 
     var currentPageIndexWithoutClones;
@@ -25327,7 +25625,7 @@ var app = (function () {
   var Carousel = /*#__PURE__*/function (_SvelteComponentDev) {
     _inherits(Carousel, _SvelteComponentDev);
 
-    var _super = _createSuper$6(Carousel);
+    var _super = _createSuper$7(Carousel);
 
     function Carousel(options) {
       var _this;
@@ -25335,7 +25633,7 @@ var app = (function () {
       _classCallCheck(this, Carousel);
 
       _this = _super.call(this, options);
-      init(_assertThisInitialized(_this), options, instance$6, create_fragment$6, safe_not_equal, {
+      init(_assertThisInitialized(_this), options, instance$7, create_fragment$7, safe_not_equal, {
         timingFunction: 0,
         arrows: 1,
         infinite: 2,
@@ -25356,7 +25654,7 @@ var app = (function () {
         component: _assertThisInitialized(_this),
         tagName: "Carousel",
         options: options,
-        id: create_fragment$6.name
+        id: create_fragment$7.name
       });
       return _this;
     }
@@ -25486,16 +25784,23 @@ var app = (function () {
     return Carousel;
   }(SvelteComponentDev);
 
-  function _createSuper$5(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$5(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+  function _createSuper$6(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$6(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
 
-  function _isNativeReflectConstruct$5() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
-  var file$5 = "src\\InfoPanel.svelte";
+  function _isNativeReflectConstruct$6() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+  var file$6 = "src\\InfoPanel.svelte";
 
-  function get_each_context(ctx, list, i) {
+  function get_each_context$2(ctx, list, i) {
     var child_ctx = ctx.slice();
-    child_ctx[6] = list[i];
+    child_ctx[18] = list[i];
+    child_ctx[20] = i;
     return child_ctx;
-  } // (120:4) {:else}
+  }
+
+  function get_each_context_1(ctx, list, i) {
+    var child_ctx = ctx.slice();
+    child_ctx[18] = list[i];
+    return child_ctx;
+  } // (259:4) {:else}
 
 
   function create_else_block_1$1(ctx) {
@@ -25541,26 +25846,26 @@ var app = (function () {
         span3.textContent = "NYC Green Relief & Recovery Fund";
         t11 = text(".");
         attr_dev(span0, "id", "pane-title");
-        add_location(span0, file$5, 122, 12, 4116);
+        add_location(span0, file$6, 261, 12, 8822);
         attr_dev(div0, "class", "info-title");
-        add_location(div0, file$5, 121, 8, 4078);
-        add_location(br0, file$5, 127, 12, 4556);
-        add_location(br1, file$5, 127, 16, 4560);
+        add_location(div0, file$6, 260, 8, 8784);
+        add_location(br0, file$6, 266, 12, 9262);
+        add_location(br1, file$6, 266, 16, 9266);
         attr_dev(a, "href", "https://commons.pratt.edu/savi/");
         attr_dev(a, "target", "_blank");
-        add_location(a, file$5, 127, 78, 4622);
+        add_location(a, file$6, 266, 78, 9328);
         set_style(span1, "color", "var(--parkColor)");
         set_style(span1, "font-weight", "bold");
-        add_location(span1, file$5, 128, 12, 4835);
+        add_location(span1, file$6, 267, 12, 9541);
         set_style(span2, "color", "var(--parkColor)");
         set_style(span2, "font-weight", "bold");
-        add_location(span2, file$5, 128, 101, 4924);
+        add_location(span2, file$6, 267, 101, 9630);
         set_style(span3, "color", "var(--parkColor)");
         set_style(span3, "font-weight", "bold");
-        add_location(span3, file$5, 129, 12, 5029);
-        add_location(p, file$5, 126, 12, 4230);
+        add_location(span3, file$6, 268, 12, 9735);
+        add_location(p, file$6, 265, 12, 8936);
         attr_dev(div1, "class", "info-container");
-        add_location(div1, file$5, 125, 8, 4188);
+        add_location(div1, file$6, 264, 8, 8894);
       },
       m: function mount(target, anchor) {
         insert_dev(target, div0, anchor);
@@ -25594,192 +25899,346 @@ var app = (function () {
       block: block,
       id: create_else_block_1$1.name,
       type: "else",
-      source: "(120:4) {:else}",
+      source: "(259:4) {:else}",
       ctx: ctx
     });
     return block;
-  } // (69:4) {#if active_table}
+  } // (168:4) {#if active_table}
 
 
-  function create_if_block$2(ctx) {
-    var div0;
-    var span0;
-    var t0_value =
-    /*active_table*/
-    ctx[0][0]['Text-Name'] + "";
+  function create_if_block$4(ctx) {
     var t0;
+    var current_block_type_index;
+    var if_block1;
     var t1;
-    var previous_key =
-    /*active_photos*/
-    ctx[1];
+    var div;
     var t2;
-    var div1;
-    var p0;
-    var span1;
-    var t3_value =
-    /*active_table*/
-    ctx[0][0]['Text-Acres'] + "";
     var t3;
     var t4;
-    var p1;
-    var span2;
-    var t5_value =
-    /*active_table*/
-    ctx[0][0]['Text-Address'] + "";
     var t5;
-    var t6;
-    var t7;
-    var t8;
     var current;
-    var key_block = create_key_block$1(ctx);
+    var if_block0 =
+    /*active_table*/
+    ctx[0][0]['Text-Name'] && create_if_block_8(ctx);
+    var if_block_creators = [create_if_block_6, create_if_block_7];
+    var if_blocks = [];
 
     function select_block_type_1(ctx, dirty) {
+      if (
+      /*photosLoading*/
+      ctx[3]) return 0;
+      if (
+      /*active_photos*/
+      ctx[1] &&
+      /*active_photos*/
+      ctx[1].length) return 1;
+      return -1;
+    }
+
+    if (~(current_block_type_index = select_block_type_1(ctx))) {
+      if_block1 = if_blocks[current_block_type_index] = if_block_creators[current_block_type_index](ctx);
+    }
+
+    var if_block2 =
+    /*active_table*/
+    ctx[0][0]['Text-Acres'] && create_if_block_5(ctx);
+    var if_block3 =
+    /*active_table*/
+    ctx[0][0]['Text-Address'] && create_if_block_4(ctx);
+
+    function select_block_type_2(ctx, dirty) {
       if (
       /*active_table*/
       ctx[0][0]['Text-Copy']) return create_if_block_3;
       return create_else_block$2;
     }
 
-    var current_block_type = select_block_type_1(ctx);
-    var if_block0 = current_block_type(ctx);
-    var if_block1 =
+    var current_block_type = select_block_type_2(ctx);
+    var if_block4 = current_block_type(ctx);
+    var if_block5 =
     /*active_table*/
-    ctx[0][0]['Text_Web'] && create_if_block_2$1(ctx);
-    var if_block2 =
+    ctx[0][0]['Text_Web'] && create_if_block_2$3(ctx);
+    var if_block6 =
     /*active_photos*/
-    ctx[1] && create_if_block_1$1(ctx);
+    ctx[1] &&
+    /*active_photos*/
+    ctx[1].length && create_if_block_1$3(ctx);
     var block = {
       c: function create() {
-        div0 = element("div");
-        span0 = element("span");
-        t0 = text(t0_value);
-        t1 = space();
-        key_block.c();
-        t2 = space();
-        div1 = element("div");
-        p0 = element("p");
-        span1 = element("span");
-        t3 = text(t3_value);
-        t4 = space();
-        p1 = element("p");
-        span2 = element("span");
-        t5 = text(t5_value);
-        t6 = space();
-        if_block0.c();
-        t7 = space();
+        if (if_block0) if_block0.c();
+        t0 = space();
         if (if_block1) if_block1.c();
-        t8 = space();
+        t1 = space();
+        div = element("div");
         if (if_block2) if_block2.c();
-        attr_dev(span0, "id", "pane-title");
-        add_location(span0, file$5, 71, 16, 2103);
-        attr_dev(div0, "class", "info-title");
-        add_location(div0, file$5, 70, 12, 2061);
-        attr_dev(span1, "id", "info-title");
-        add_location(span1, file$5, 101, 15, 3090);
-        add_location(p0, file$5, 101, 12, 3087);
-        attr_dev(span2, "id", "info-title");
-        add_location(span2, file$5, 102, 15, 3172);
-        add_location(p1, file$5, 102, 12, 3169);
-        attr_dev(div1, "class", "info-container");
-        add_location(div1, file$5, 99, 8, 3043);
+        t2 = space();
+        if (if_block3) if_block3.c();
+        t3 = space();
+        if_block4.c();
+        t4 = space();
+        if (if_block5) if_block5.c();
+        t5 = space();
+        if (if_block6) if_block6.c();
+        attr_dev(div, "class", "info-container");
+        add_location(div, file$6, 234, 8, 7579);
       },
       m: function mount(target, anchor) {
-        insert_dev(target, div0, anchor);
-        append_dev(div0, span0);
-        append_dev(span0, t0);
+        if (if_block0) if_block0.m(target, anchor);
+        insert_dev(target, t0, anchor);
+
+        if (~current_block_type_index) {
+          if_blocks[current_block_type_index].m(target, anchor);
+        }
+
         insert_dev(target, t1, anchor);
-        key_block.m(target, anchor);
-        insert_dev(target, t2, anchor);
-        insert_dev(target, div1, anchor);
-        append_dev(div1, p0);
-        append_dev(p0, span1);
-        append_dev(span1, t3);
-        append_dev(div1, t4);
-        append_dev(div1, p1);
-        append_dev(p1, span2);
-        append_dev(span2, t5);
-        append_dev(div1, t6);
-        if_block0.m(div1, null);
-        append_dev(div1, t7);
-        if (if_block1) if_block1.m(div1, null);
-        append_dev(div1, t8);
-        if (if_block2) if_block2.m(div1, null);
+        insert_dev(target, div, anchor);
+        if (if_block2) if_block2.m(div, null);
+        append_dev(div, t2);
+        if (if_block3) if_block3.m(div, null);
+        append_dev(div, t3);
+        if_block4.m(div, null);
+        append_dev(div, t4);
+        if (if_block5) if_block5.m(div, null);
+        append_dev(div, t5);
+        if (if_block6) if_block6.m(div, null);
         current = true;
       },
       p: function update(ctx, dirty) {
-        if ((!current || dirty &
+        if (
         /*active_table*/
-        1) && t0_value !== (t0_value =
-        /*active_table*/
-        ctx[0][0]['Text-Name'] + "")) set_data_dev(t0, t0_value);
-
-        if (dirty &
-        /*active_photos*/
-        2 && safe_not_equal(previous_key, previous_key =
-        /*active_photos*/
-        ctx[1])) {
-          group_outros();
-          transition_out(key_block, 1, 1, noop);
-          check_outros();
-          key_block = create_key_block$1(ctx);
-          key_block.c();
-          transition_in(key_block);
-          key_block.m(t2.parentNode, t2);
-        } else {
-          key_block.p(ctx, dirty);
+        ctx[0][0]['Text-Name']) {
+          if (if_block0) {
+            if_block0.p(ctx, dirty);
+          } else {
+            if_block0 = create_if_block_8(ctx);
+            if_block0.c();
+            if_block0.m(t0.parentNode, t0);
+          }
+        } else if (if_block0) {
+          if_block0.d(1);
+          if_block0 = null;
         }
 
-        if ((!current || dirty &
-        /*active_table*/
-        1) && t3_value !== (t3_value =
-        /*active_table*/
-        ctx[0][0]['Text-Acres'] + "")) set_data_dev(t3, t3_value);
-        if ((!current || dirty &
-        /*active_table*/
-        1) && t5_value !== (t5_value =
-        /*active_table*/
-        ctx[0][0]['Text-Address'] + "")) set_data_dev(t5, t5_value);
+        var previous_block_index = current_block_type_index;
+        current_block_type_index = select_block_type_1(ctx);
 
-        if (current_block_type === (current_block_type = select_block_type_1(ctx)) && if_block0) {
-          if_block0.p(ctx, dirty);
+        if (current_block_type_index === previous_block_index) {
+          if (~current_block_type_index) {
+            if_blocks[current_block_type_index].p(ctx, dirty);
+          }
         } else {
-          if_block0.d(1);
-          if_block0 = current_block_type(ctx);
+          if (if_block1) {
+            group_outros();
+            transition_out(if_blocks[previous_block_index], 1, 1, function () {
+              if_blocks[previous_block_index] = null;
+            });
+            check_outros();
+          }
 
-          if (if_block0) {
-            if_block0.c();
-            if_block0.m(div1, t7);
+          if (~current_block_type_index) {
+            if_block1 = if_blocks[current_block_type_index];
+
+            if (!if_block1) {
+              if_block1 = if_blocks[current_block_type_index] = if_block_creators[current_block_type_index](ctx);
+              if_block1.c();
+            } else {
+              if_block1.p(ctx, dirty);
+            }
+
+            transition_in(if_block1, 1);
+            if_block1.m(t1.parentNode, t1);
+          } else {
+            if_block1 = null;
+          }
+        }
+
+        if (
+        /*active_table*/
+        ctx[0][0]['Text-Acres']) {
+          if (if_block2) {
+            if_block2.p(ctx, dirty);
+          } else {
+            if_block2 = create_if_block_5(ctx);
+            if_block2.c();
+            if_block2.m(div, t2);
+          }
+        } else if (if_block2) {
+          if_block2.d(1);
+          if_block2 = null;
+        }
+
+        if (
+        /*active_table*/
+        ctx[0][0]['Text-Address']) {
+          if (if_block3) {
+            if_block3.p(ctx, dirty);
+          } else {
+            if_block3 = create_if_block_4(ctx);
+            if_block3.c();
+            if_block3.m(div, t3);
+          }
+        } else if (if_block3) {
+          if_block3.d(1);
+          if_block3 = null;
+        }
+
+        if (current_block_type === (current_block_type = select_block_type_2(ctx)) && if_block4) {
+          if_block4.p(ctx, dirty);
+        } else {
+          if_block4.d(1);
+          if_block4 = current_block_type(ctx);
+
+          if (if_block4) {
+            if_block4.c();
+            if_block4.m(div, t4);
           }
         }
 
         if (
         /*active_table*/
         ctx[0][0]['Text_Web']) {
-          if (if_block1) {
-            if_block1.p(ctx, dirty);
+          if (if_block5) {
+            if_block5.p(ctx, dirty);
           } else {
-            if_block1 = create_if_block_2$1(ctx);
-            if_block1.c();
-            if_block1.m(div1, t8);
+            if_block5 = create_if_block_2$3(ctx);
+            if_block5.c();
+            if_block5.m(div, t5);
           }
-        } else if (if_block1) {
-          if_block1.d(1);
-          if_block1 = null;
+        } else if (if_block5) {
+          if_block5.d(1);
+          if_block5 = null;
         }
 
         if (
         /*active_photos*/
-        ctx[1]) {
-          if (if_block2) {
-            if_block2.p(ctx, dirty);
+        ctx[1] &&
+        /*active_photos*/
+        ctx[1].length) {
+          if (if_block6) {
+            if_block6.p(ctx, dirty);
           } else {
-            if_block2 = create_if_block_1$1(ctx);
-            if_block2.c();
-            if_block2.m(div1, null);
+            if_block6 = create_if_block_1$3(ctx);
+            if_block6.c();
+            if_block6.m(div, null);
           }
-        } else if (if_block2) {
-          if_block2.d(1);
-          if_block2 = null;
+        } else if (if_block6) {
+          if_block6.d(1);
+          if_block6 = null;
+        }
+      },
+      i: function intro(local) {
+        if (current) return;
+        transition_in(if_block1);
+        current = true;
+      },
+      o: function outro(local) {
+        transition_out(if_block1);
+        current = false;
+      },
+      d: function destroy(detaching) {
+        if (if_block0) if_block0.d(detaching);
+        if (detaching) detach_dev(t0);
+
+        if (~current_block_type_index) {
+          if_blocks[current_block_type_index].d(detaching);
+        }
+
+        if (detaching) detach_dev(t1);
+        if (detaching) detach_dev(div);
+        if (if_block2) if_block2.d();
+        if (if_block3) if_block3.d();
+        if_block4.d();
+        if (if_block5) if_block5.d();
+        if (if_block6) if_block6.d();
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_if_block$4.name,
+      type: "if",
+      source: "(168:4) {#if active_table}",
+      ctx: ctx
+    });
+    return block;
+  } // (170:12) {#if active_table[0]['Text-Name']}
+
+
+  function create_if_block_8(ctx) {
+    var div;
+    var span;
+    var t_value =
+    /*active_table*/
+    ctx[0][0]['Text-Name'] + "";
+    var t;
+    var block = {
+      c: function create() {
+        div = element("div");
+        span = element("span");
+        t = text(t_value);
+        attr_dev(span, "id", "pane-title");
+        add_location(span, file$6, 171, 20, 5021);
+        attr_dev(div, "class", "info-title");
+        add_location(div, file$6, 170, 16, 4975);
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, div, anchor);
+        append_dev(div, span);
+        append_dev(span, t);
+      },
+      p: function update(ctx, dirty) {
+        if (dirty &
+        /*active_table*/
+        1 && t_value !== (t_value =
+        /*active_table*/
+        ctx[0][0]['Text-Name'] + "")) set_data_dev(t, t_value);
+      },
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(div);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_if_block_8.name,
+      type: "if",
+      source: "(170:12) {#if active_table[0]['Text-Name']}",
+      ctx: ctx
+    });
+    return block;
+  } // (182:56) 
+
+
+  function create_if_block_7(ctx) {
+    var previous_key =
+    /*active_bbl*/
+    ctx[2];
+    var key_block_anchor;
+    var current;
+    var key_block = create_key_block$1(ctx);
+    var block = {
+      c: function create() {
+        key_block.c();
+        key_block_anchor = empty();
+      },
+      m: function mount(target, anchor) {
+        key_block.m(target, anchor);
+        insert_dev(target, key_block_anchor, anchor);
+        current = true;
+      },
+      p: function update(ctx, dirty) {
+        if (dirty &
+        /*active_bbl*/
+        4 && safe_not_equal(previous_key, previous_key =
+        /*active_bbl*/
+        ctx[2])) {
+          group_outros();
+          transition_out(key_block, 1, 1, noop);
+          check_outros();
+          key_block = create_key_block$1(ctx);
+          key_block.c();
+          transition_in(key_block);
+          key_block.m(key_block_anchor.parentNode, key_block_anchor);
+        } else {
+          key_block.p(ctx, dirty);
         }
       },
       i: function intro(local) {
@@ -25792,81 +26251,144 @@ var app = (function () {
         current = false;
       },
       d: function destroy(detaching) {
-        if (detaching) detach_dev(div0);
-        if (detaching) detach_dev(t1);
+        if (detaching) detach_dev(key_block_anchor);
         key_block.d(detaching);
-        if (detaching) detach_dev(t2);
-        if (detaching) detach_dev(div1);
-        if_block0.d();
-        if (if_block1) if_block1.d();
-        if (if_block2) if_block2.d();
       }
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_if_block$2.name,
+      id: create_if_block_7.name,
       type: "if",
-      source: "(69:4) {#if active_table}",
+      source: "(182:56) ",
       ctx: ctx
     });
     return block;
-  } // (87:20) {#each active_photos as photo }
+  } // (177:8) {#if photosLoading}
 
 
-  function create_each_block(ctx) {
-    var img;
-    var img_src_value;
+  function create_if_block_6(ctx) {
+    var div1;
+    var div0;
+    var t0;
+    var span;
     var block = {
       c: function create() {
-        img = element("img");
-        attr_dev(img, "class", "container-photos");
-        attr_dev(img, "alt", "test");
-        if (!src_url_equal(img.src, img_src_value = "./img/" +
-        /*photo*/
-        ctx[6].site + "/" +
-        /*photo*/
-        ctx[6].photo.trim() + ".jpg")) attr_dev(img, "src", img_src_value);
-        add_location(img, file$5, 87, 24, 2655);
+        div1 = element("div");
+        div0 = element("div");
+        t0 = space();
+        span = element("span");
+        span.textContent = "Loading photos…";
+        attr_dev(div0, "class", "photo-loading-spinner svelte-193byx7");
+        attr_dev(div0, "aria-hidden", "true");
+        add_location(div0, file$6, 178, 16, 5301);
+        add_location(span, file$6, 179, 16, 5379);
+        attr_dev(div1, "class", "photo-loading svelte-193byx7");
+        attr_dev(div1, "aria-live", "polite");
+        add_location(div1, file$6, 177, 12, 5237);
       },
       m: function mount(target, anchor) {
-        insert_dev(target, img, anchor);
+        insert_dev(target, div1, anchor);
+        append_dev(div1, div0);
+        append_dev(div1, t0);
+        append_dev(div1, span);
       },
-      p: function update(ctx, dirty) {
+      p: noop,
+      i: noop,
+      o: noop,
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(div1);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_if_block_6.name,
+      type: "if",
+      source: "(177:8) {#if photosLoading}",
+      ctx: ctx
+    });
+    return block;
+  } // (196:20) {#each active_photos as photo}
+
+
+  function create_each_block_1(ctx) {
+    var div;
+    var img;
+    var img_src_value;
+    var t;
+    var mounted;
+    var dispose;
+
+    function error_handler() {
+      return (
+        /*error_handler*/
+        ctx[13](
+        /*photo*/
+        ctx[18])
+      );
+    }
+
+    var block = {
+      c: function create() {
+        div = element("div");
+        img = element("img");
+        t = space();
+        attr_dev(img, "class", "container-photos");
+        attr_dev(img, "alt", "Site");
+        if (!src_url_equal(img.src, img_src_value = photoSrc(
+        /*photo*/
+        ctx[18]))) attr_dev(img, "src", img_src_value);
+        add_location(img, file$6, 197, 28, 6134);
+        attr_dev(div, "class", "carousel-slide");
+        add_location(div, file$6, 196, 24, 6076);
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, div, anchor);
+        append_dev(div, img);
+        append_dev(div, t);
+
+        if (!mounted) {
+          dispose = listen_dev(img, "error", error_handler, false, false, false);
+          mounted = true;
+        }
+      },
+      p: function update(new_ctx, dirty) {
+        ctx = new_ctx;
+
         if (dirty &
         /*active_photos*/
-        2 && !src_url_equal(img.src, img_src_value = "./img/" +
+        2 && !src_url_equal(img.src, img_src_value = photoSrc(
         /*photo*/
-        ctx[6].site + "/" +
-        /*photo*/
-        ctx[6].photo.trim() + ".jpg")) {
+        ctx[18]))) {
           attr_dev(img, "src", img_src_value);
         }
       },
       d: function destroy(detaching) {
-        if (detaching) detach_dev(img);
+        if (detaching) detach_dev(div);
+        mounted = false;
+        dispose();
       }
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_each_block.name,
+      id: create_each_block_1.name,
       type: "each",
-      source: "(87:20) {#each active_photos as photo }",
+      source: "(196:20) {#each active_photos as photo}",
       ctx: ctx
     });
     return block;
-  } // (78:16) <Carousel                      let:showPrevPage                      let:showNextPage                  >
+  } // (186:16) <Carousel                      bind:this={carousel}                      dots={false}                      on:pageChange={handlePageChange}                  >
 
 
   function create_default_slot$1(ctx) {
     var each_1_anchor;
-    var each_value =
+    var each_value_1 =
     /*active_photos*/
     ctx[1];
-    validate_each_argument(each_value);
+    validate_each_argument(each_value_1);
     var each_blocks = [];
 
-    for (var i = 0; i < each_value.length; i += 1) {
-      each_blocks[i] = create_each_block(get_each_context(ctx, each_value, i));
+    for (var i = 0; i < each_value_1.length; i += 1) {
+      each_blocks[i] = create_each_block_1(get_each_context_1(ctx, each_value_1, i));
     }
 
     var block = {
@@ -25886,22 +26408,22 @@ var app = (function () {
       },
       p: function update(ctx, dirty) {
         if (dirty &
-        /*active_photos*/
-        2) {
-          each_value =
+        /*photoSrc, active_photos, handlePhotoError*/
+        66) {
+          each_value_1 =
           /*active_photos*/
           ctx[1];
-          validate_each_argument(each_value);
+          validate_each_argument(each_value_1);
 
           var _i3;
 
-          for (_i3 = 0; _i3 < each_value.length; _i3 += 1) {
-            var child_ctx = get_each_context(ctx, each_value, _i3);
+          for (_i3 = 0; _i3 < each_value_1.length; _i3 += 1) {
+            var child_ctx = get_each_context_1(ctx, each_value_1, _i3);
 
             if (each_blocks[_i3]) {
               each_blocks[_i3].p(child_ctx, dirty);
             } else {
-              each_blocks[_i3] = create_each_block(child_ctx);
+              each_blocks[_i3] = create_each_block_1(child_ctx);
 
               each_blocks[_i3].c();
 
@@ -25913,7 +26435,7 @@ var app = (function () {
             each_blocks[_i3].d(1);
           }
 
-          each_blocks.length = each_value.length;
+          each_blocks.length = each_value_1.length;
         }
       },
       d: function destroy(detaching) {
@@ -25925,56 +26447,45 @@ var app = (function () {
       block: block,
       id: create_default_slot$1.name,
       type: "slot",
-      source: "(78:16) <Carousel                      let:showPrevPage                      let:showNextPage                  >",
+      source: "(186:16) <Carousel                      bind:this={carousel}                      dots={false}                      on:pageChange={handlePageChange}                  >",
       ctx: ctx
     });
     return block;
-  } // (83:20) 
+  } // (192:20) 
 
 
   function create_prev_slot(ctx) {
-    var div;
-    var i1;
-    var t;
-    var i0;
+    var button;
+    var span;
     var mounted;
     var dispose;
     var block = {
       c: function create() {
-        div = element("div");
-        i1 = element("i");
-        t = text("❮");
-        i0 = element("i");
-        attr_dev(i0, "class", "svelte-1mpfc2o");
-        add_location(i0, file$5, 83, 35, 2539);
-        attr_dev(i1, "class", "svelte-1mpfc2o");
-        add_location(i1, file$5, 83, 24, 2528);
-        attr_dev(div, "slot", "prev");
-        attr_dev(div, "class", "custom-arrow custom-arrow-prev svelte-1mpfc2o");
-        add_location(div, file$5, 82, 20, 2422);
+        button = element("button");
+        span = element("span");
+        span.textContent = "❮";
+        attr_dev(span, "class", "arrow-icon svelte-193byx7");
+        add_location(span, file$6, 192, 24, 5925);
+        attr_dev(button, "type", "button");
+        attr_dev(button, "slot", "prev");
+        attr_dev(button, "class", "custom-arrow custom-arrow-prev svelte-193byx7");
+        attr_dev(button, "aria-label", "Previous photo");
+        add_location(button, file$6, 191, 20, 5773);
       },
       m: function mount(target, anchor) {
-        insert_dev(target, div, anchor);
-        append_dev(div, i1);
-        append_dev(i1, t);
-        append_dev(i1, i0);
+        insert_dev(target, button, anchor);
+        append_dev(button, span);
 
         if (!mounted) {
-          dispose = listen_dev(div, "click", function () {
-            if (is_function(
-            /*showPrevPage*/
-            ctx[4]))
-              /*showPrevPage*/
-              ctx[4].apply(this, arguments);
-          }, false, false, false);
+          dispose = listen_dev(button, "click",
+          /*showPrevPhoto*/
+          ctx[8], false, false, false);
           mounted = true;
         }
       },
-      p: function update(new_ctx, dirty) {
-        ctx = new_ctx;
-      },
+      p: noop,
       d: function destroy(detaching) {
-        if (detaching) detach_dev(div);
+        if (detaching) detach_dev(button);
         mounted = false;
         dispose();
       }
@@ -25983,56 +26494,45 @@ var app = (function () {
       block: block,
       id: create_prev_slot.name,
       type: "slot",
-      source: "(83:20) ",
+      source: "(192:20) ",
       ctx: ctx
     });
     return block;
-  } // (91:20) 
+  } // (207:20) 
 
 
   function create_next_slot(ctx) {
-    var div;
-    var i1;
-    var t;
-    var i0;
+    var button;
+    var span;
     var mounted;
     var dispose;
     var block = {
       c: function create() {
-        div = element("div");
-        i1 = element("i");
-        t = text("❯");
-        i0 = element("i");
-        attr_dev(i0, "class", "svelte-1mpfc2o");
-        add_location(i0, file$5, 91, 35, 2921);
-        attr_dev(i1, "class", "svelte-1mpfc2o");
-        add_location(i1, file$5, 91, 24, 2910);
-        attr_dev(div, "slot", "next");
-        attr_dev(div, "class", "custom-arrow custom-arrow-next svelte-1mpfc2o");
-        add_location(div, file$5, 90, 20, 2804);
+        button = element("button");
+        span = element("span");
+        span.textContent = "❯";
+        attr_dev(span, "class", "arrow-icon svelte-193byx7");
+        add_location(span, file$6, 207, 24, 6634);
+        attr_dev(button, "type", "button");
+        attr_dev(button, "slot", "next");
+        attr_dev(button, "class", "custom-arrow custom-arrow-next svelte-193byx7");
+        attr_dev(button, "aria-label", "Next photo");
+        add_location(button, file$6, 206, 20, 6486);
       },
       m: function mount(target, anchor) {
-        insert_dev(target, div, anchor);
-        append_dev(div, i1);
-        append_dev(i1, t);
-        append_dev(i1, i0);
+        insert_dev(target, button, anchor);
+        append_dev(button, span);
 
         if (!mounted) {
-          dispose = listen_dev(div, "click", function () {
-            if (is_function(
-            /*showNextPage*/
-            ctx[5]))
-              /*showNextPage*/
-              ctx[5].apply(this, arguments);
-          }, false, false, false);
+          dispose = listen_dev(button, "click",
+          /*showNextPhoto*/
+          ctx[9], false, false, false);
           mounted = true;
         }
       },
-      p: function update(new_ctx, dirty) {
-        ctx = new_ctx;
-      },
+      p: noop,
       d: function destroy(detaching) {
-        if (detaching) detach_dev(div);
+        if (detaching) detach_dev(button);
         mounted = false;
         dispose();
       }
@@ -26041,112 +26541,333 @@ var app = (function () {
       block: block,
       id: create_next_slot.name,
       type: "slot",
-      source: "(91:20) ",
+      source: "(207:20) ",
       ctx: ctx
     });
     return block;
-  } // (75:8) {#key active_photos}
+  } // (214:20) {#each active_photos as photo, i}
+
+
+  function create_each_block$2(ctx) {
+    var button;
+    var img;
+    var img_src_value;
+    var t;
+    var mounted;
+    var dispose;
+
+    function error_handler_1() {
+      return (
+        /*error_handler_1*/
+        ctx[15](
+        /*photo*/
+        ctx[18])
+      );
+    }
+
+    function click_handler() {
+      return (
+        /*click_handler*/
+        ctx[16](
+        /*i*/
+        ctx[20])
+      );
+    }
+
+    var block = {
+      c: function create() {
+        button = element("button");
+        img = element("img");
+        t = space();
+        if (!src_url_equal(img.src, img_src_value = photoSrc(
+        /*photo*/
+        ctx[18]))) attr_dev(img, "src", img_src_value);
+        attr_dev(img, "alt", "");
+        attr_dev(img, "class", "svelte-193byx7");
+        add_location(img, file$6, 221, 28, 7213);
+        attr_dev(button, "type", "button");
+        attr_dev(button, "class", "photo-thumb svelte-193byx7");
+        attr_dev(button, "aria-label", "Show photo " + (
+        /*i*/
+        ctx[20] + 1));
+        toggle_class(button, "thumb-active",
+        /*currentPhotoIndex*/
+        ctx[5] ===
+        /*i*/
+        ctx[20]);
+        add_location(button, file$6, 214, 24, 6863);
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, button, anchor);
+        append_dev(button, img);
+        append_dev(button, t);
+
+        if (!mounted) {
+          dispose = [listen_dev(img, "error", error_handler_1, false, false, false), listen_dev(button, "click", click_handler, false, false, false)];
+          mounted = true;
+        }
+      },
+      p: function update(new_ctx, dirty) {
+        ctx = new_ctx;
+
+        if (dirty &
+        /*active_photos*/
+        2 && !src_url_equal(img.src, img_src_value = photoSrc(
+        /*photo*/
+        ctx[18]))) {
+          attr_dev(img, "src", img_src_value);
+        }
+
+        if (dirty &
+        /*currentPhotoIndex*/
+        32) {
+          toggle_class(button, "thumb-active",
+          /*currentPhotoIndex*/
+          ctx[5] ===
+          /*i*/
+          ctx[20]);
+        }
+      },
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(button);
+        mounted = false;
+        run_all(dispose);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_each_block$2.name,
+      type: "each",
+      source: "(214:20) {#each active_photos as photo, i}",
+      ctx: ctx
+    });
+    return block;
+  } // (183:8) {#key active_bbl}
 
 
   function create_key_block$1(ctx) {
-    var div;
-    var carousel;
+    var div1;
+    var carousel_1;
+    var t;
+    var div0;
     var current;
-    carousel = new Carousel({
-      props: {
-        $$slots: {
-          next: [create_next_slot, function (_ref) {
-            var showPrevPage = _ref.showPrevPage,
-                showNextPage = _ref.showNextPage;
-            return {
-              4: showPrevPage,
-              5: showNextPage
-            };
-          }, function (_ref2) {
-            var showPrevPage = _ref2.showPrevPage,
-                showNextPage = _ref2.showNextPage;
-            return (showPrevPage ? 16 : 0) | (showNextPage ? 32 : 0);
-          }],
-          prev: [create_prev_slot, function (_ref3) {
-            var showPrevPage = _ref3.showPrevPage,
-                showNextPage = _ref3.showNextPage;
-            return {
-              4: showPrevPage,
-              5: showNextPage
-            };
-          }, function (_ref4) {
-            var showPrevPage = _ref4.showPrevPage,
-                showNextPage = _ref4.showNextPage;
-            return (showPrevPage ? 16 : 0) | (showNextPage ? 32 : 0);
-          }],
-          default: [create_default_slot$1, function (_ref5) {
-            var showPrevPage = _ref5.showPrevPage,
-                showNextPage = _ref5.showNextPage;
-            return {
-              4: showPrevPage,
-              5: showNextPage
-            };
-          }, function (_ref6) {
-            var showPrevPage = _ref6.showPrevPage,
-                showNextPage = _ref6.showNextPage;
-            return (showPrevPage ? 16 : 0) | (showNextPage ? 32 : 0);
-          }]
-        },
-        $$scope: {
-          ctx: ctx
-        }
+    var carousel_1_props = {
+      dots: false,
+      $$slots: {
+        next: [create_next_slot],
+        prev: [create_prev_slot],
+        default: [create_default_slot$1]
       },
+      $$scope: {
+        ctx: ctx
+      }
+    };
+    carousel_1 = new Carousel({
+      props: carousel_1_props,
       $$inline: true
     });
+    /*carousel_1_binding*/
+
+    ctx[14](carousel_1);
+    carousel_1.$on("pageChange",
+    /*handlePageChange*/
+    ctx[7]);
+    var each_value =
+    /*active_photos*/
+    ctx[1];
+    validate_each_argument(each_value);
+    var each_blocks = [];
+
+    for (var i = 0; i < each_value.length; i += 1) {
+      each_blocks[i] = create_each_block$2(get_each_context$2(ctx, each_value, i));
+    }
+
     var block = {
       c: function create() {
-        div = element("div");
-        create_component(carousel.$$.fragment);
-        attr_dev(div, "class", "photo-container");
-        add_location(div, file$5, 75, 12, 2229);
+        div1 = element("div");
+        create_component(carousel_1.$$.fragment);
+        t = space();
+        div0 = element("div");
+
+        for (var _i4 = 0; _i4 < each_blocks.length; _i4 += 1) {
+          each_blocks[_i4].c();
+        }
+
+        attr_dev(div0, "class", "photo-thumbs svelte-193byx7");
+        add_location(div0, file$6, 212, 16, 6756);
+        attr_dev(div1, "class", "photo-container svelte-193byx7");
+        add_location(div1, file$6, 183, 12, 5526);
       },
       m: function mount(target, anchor) {
-        insert_dev(target, div, anchor);
-        mount_component(carousel, div, null);
+        insert_dev(target, div1, anchor);
+        mount_component(carousel_1, div1, null);
+        append_dev(div1, t);
+        append_dev(div1, div0);
+
+        for (var _i5 = 0; _i5 < each_blocks.length; _i5 += 1) {
+          each_blocks[_i5].m(div0, null);
+        }
+
         current = true;
       },
       p: function update(ctx, dirty) {
-        var carousel_changes = {};
+        var carousel_1_changes = {};
 
         if (dirty &
-        /*$$scope, showNextPage, showPrevPage, active_photos*/
-        562) {
-          carousel_changes.$$scope = {
+        /*$$scope, active_photos*/
+        8388610) {
+          carousel_1_changes.$$scope = {
             dirty: dirty,
             ctx: ctx
           };
         }
 
-        carousel.$set(carousel_changes);
+        carousel_1.$set(carousel_1_changes);
+
+        if (dirty &
+        /*currentPhotoIndex, goToPhoto, photoSrc, active_photos, handlePhotoError*/
+        1122) {
+          each_value =
+          /*active_photos*/
+          ctx[1];
+          validate_each_argument(each_value);
+
+          var _i6;
+
+          for (_i6 = 0; _i6 < each_value.length; _i6 += 1) {
+            var child_ctx = get_each_context$2(ctx, each_value, _i6);
+
+            if (each_blocks[_i6]) {
+              each_blocks[_i6].p(child_ctx, dirty);
+            } else {
+              each_blocks[_i6] = create_each_block$2(child_ctx);
+
+              each_blocks[_i6].c();
+
+              each_blocks[_i6].m(div0, null);
+            }
+          }
+
+          for (; _i6 < each_blocks.length; _i6 += 1) {
+            each_blocks[_i6].d(1);
+          }
+
+          each_blocks.length = each_value.length;
+        }
       },
       i: function intro(local) {
         if (current) return;
-        transition_in(carousel.$$.fragment, local);
+        transition_in(carousel_1.$$.fragment, local);
         current = true;
       },
       o: function outro(local) {
-        transition_out(carousel.$$.fragment, local);
+        transition_out(carousel_1.$$.fragment, local);
         current = false;
       },
       d: function destroy(detaching) {
-        if (detaching) detach_dev(div);
-        destroy_component(carousel);
+        if (detaching) detach_dev(div1);
+        /*carousel_1_binding*/
+
+        ctx[14](null);
+        destroy_component(carousel_1);
+        destroy_each(each_blocks, detaching);
       }
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
       id: create_key_block$1.name,
       type: "key",
-      source: "(75:8) {#key active_photos}",
+      source: "(183:8) {#key active_bbl}",
       ctx: ctx
     });
     return block;
-  } // (107:12) {:else}
+  } // (237:12) {#if active_table[0]['Text-Acres']}
+
+
+  function create_if_block_5(ctx) {
+    var p;
+    var span;
+    var t_value =
+    /*active_table*/
+    ctx[0][0]['Text-Acres'] + "";
+    var t;
+    var block = {
+      c: function create() {
+        p = element("p");
+        span = element("span");
+        t = text(t_value);
+        attr_dev(span, "id", "info-title");
+        add_location(span, file$6, 237, 19, 7679);
+        add_location(p, file$6, 237, 16, 7676);
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, p, anchor);
+        append_dev(p, span);
+        append_dev(span, t);
+      },
+      p: function update(ctx, dirty) {
+        if (dirty &
+        /*active_table*/
+        1 && t_value !== (t_value =
+        /*active_table*/
+        ctx[0][0]['Text-Acres'] + "")) set_data_dev(t, t_value);
+      },
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(p);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_if_block_5.name,
+      type: "if",
+      source: "(237:12) {#if active_table[0]['Text-Acres']}",
+      ctx: ctx
+    });
+    return block;
+  } // (240:12) {#if active_table[0]['Text-Address']}
+
+
+  function create_if_block_4(ctx) {
+    var p;
+    var span;
+    var t_value =
+    /*active_table*/
+    ctx[0][0]['Text-Address'] + "";
+    var t;
+    var block = {
+      c: function create() {
+        p = element("p");
+        span = element("span");
+        t = text(t_value);
+        attr_dev(span, "id", "info-title");
+        add_location(span, file$6, 240, 19, 7835);
+        add_location(p, file$6, 240, 16, 7832);
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, p, anchor);
+        append_dev(p, span);
+        append_dev(span, t);
+      },
+      p: function update(ctx, dirty) {
+        if (dirty &
+        /*active_table*/
+        1 && t_value !== (t_value =
+        /*active_table*/
+        ctx[0][0]['Text-Address'] + "")) set_data_dev(t, t_value);
+      },
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(p);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_if_block_4.name,
+      type: "if",
+      source: "(240:12) {#if active_table[0]['Text-Address']}",
+      ctx: ctx
+    });
+    return block;
+  } // (246:12) {:else}
 
 
   function create_else_block$2(ctx) {
@@ -26176,14 +26897,14 @@ var app = (function () {
         strong1.textContent = "History:";
         t3 = space();
         span1 = element("span");
-        add_location(strong0, file$5, 107, 19, 3422);
+        add_location(strong0, file$6, 246, 19, 8104);
         attr_dev(span0, "id", "info-title");
-        add_location(span0, file$5, 107, 44, 3447);
-        add_location(p0, file$5, 107, 16, 3419);
-        add_location(strong1, file$5, 108, 19, 3540);
+        add_location(span0, file$6, 246, 44, 8129);
+        add_location(p0, file$6, 246, 16, 8101);
+        add_location(strong1, file$6, 247, 19, 8222);
         attr_dev(span1, "id", "info-title");
-        add_location(span1, file$5, 108, 46, 3567);
-        add_location(p1, file$5, 108, 16, 3537);
+        add_location(span1, file$6, 247, 46, 8249);
+        add_location(p1, file$6, 247, 16, 8219);
       },
       m: function mount(target, anchor) {
         insert_dev(target, p0, anchor);
@@ -26219,11 +26940,11 @@ var app = (function () {
       block: block,
       id: create_else_block$2.name,
       type: "else",
-      source: "(107:12) {:else}",
+      source: "(246:12) {:else}",
       ctx: ctx
     });
     return block;
-  } // (105:12) {#if active_table[0]['Text-Copy']}
+  } // (244:12) {#if active_table[0]['Text-Copy']}
 
 
   function create_if_block_3(ctx) {
@@ -26237,8 +26958,8 @@ var app = (function () {
         p = element("p");
         span = element("span");
         attr_dev(span, "id", "info-title");
-        add_location(span, file$5, 105, 19, 3310);
-        add_location(p, file$5, 105, 16, 3307);
+        add_location(span, file$6, 244, 19, 7992);
+        add_location(p, file$6, 244, 16, 7989);
       },
       m: function mount(target, anchor) {
         insert_dev(target, p, anchor);
@@ -26260,14 +26981,14 @@ var app = (function () {
       block: block,
       id: create_if_block_3.name,
       type: "if",
-      source: "(105:12) {#if active_table[0]['Text-Copy']}",
+      source: "(244:12) {#if active_table[0]['Text-Copy']}",
       ctx: ctx
     });
     return block;
-  } // (112:12) {#if active_table[0]['Text_Web']}
+  } // (251:12) {#if active_table[0]['Text_Web']}
 
 
-  function create_if_block_2$1(ctx) {
+  function create_if_block_2$3(ctx) {
     var p;
     var strong;
     var span;
@@ -26285,15 +27006,15 @@ var app = (function () {
         span = element("span");
         a = element("a");
         t1 = text(t1_value);
-        add_location(strong, file$5, 112, 19, 3729);
+        add_location(strong, file$6, 251, 19, 8411);
         attr_dev(a, "href", a_href_value =
         /*active_table*/
         ctx[0][0]['Text_Web']);
         attr_dev(a, "target", "_blank");
-        add_location(a, file$5, 112, 68, 3778);
+        add_location(a, file$6, 251, 68, 8460);
         attr_dev(span, "id", "info-title");
-        add_location(span, file$5, 112, 45, 3755);
-        add_location(p, file$5, 112, 16, 3726);
+        add_location(span, file$6, 251, 45, 8437);
+        add_location(p, file$6, 251, 16, 8408);
       },
       m: function mount(target, anchor) {
         insert_dev(target, p, anchor);
@@ -26323,16 +27044,16 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_if_block_2$1.name,
+      id: create_if_block_2$3.name,
       type: "if",
-      source: "(112:12) {#if active_table[0]['Text_Web']}",
+      source: "(251:12) {#if active_table[0]['Text_Web']}",
       ctx: ctx
     });
     return block;
-  } // (116:12) {#if active_photos}
+  } // (255:12) {#if active_photos && active_photos.length}
 
 
-  function create_if_block_1$1(ctx) {
+  function create_if_block_1$3(ctx) {
     var p;
     var t0;
     var t1_value = getCredits(
@@ -26345,7 +27066,7 @@ var app = (function () {
         t0 = text("Photo Credits: ");
         t1 = text(t1_value);
         attr_dev(p, "class", "photo-credit");
-        add_location(p, file$5, 116, 16, 3948);
+        add_location(p, file$6, 255, 16, 8654);
       },
       m: function mount(target, anchor) {
         insert_dev(target, p, anchor);
@@ -26365,20 +27086,20 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_if_block_1$1.name,
+      id: create_if_block_1$3.name,
       type: "if",
-      source: "(116:12) {#if active_photos}",
+      source: "(255:12) {#if active_photos && active_photos.length}",
       ctx: ctx
     });
     return block;
   }
 
-  function create_fragment$5(ctx) {
+  function create_fragment$6(ctx) {
     var div;
     var current_block_type_index;
     var if_block;
     var current;
-    var if_block_creators = [create_if_block$2, create_else_block_1$1];
+    var if_block_creators = [create_if_block$4, create_else_block_1$1];
     var if_blocks = [];
 
     function select_block_type(ctx, dirty) {
@@ -26395,7 +27116,7 @@ var app = (function () {
         div = element("div");
         if_block.c();
         attr_dev(div, "class", "right-content");
-        add_location(div, file$5, 66, 0, 1992);
+        add_location(div, file$6, 165, 0, 4805);
       },
       l: function claim(nodes) {
         throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -26405,9 +27126,9 @@ var app = (function () {
         if_blocks[current_block_type_index].m(div, null);
         current = true;
       },
-      p: function update(ctx, _ref7) {
-        var _ref8 = _slicedToArray(_ref7, 1),
-            dirty = _ref8[0];
+      p: function update(ctx, _ref) {
+        var _ref2 = _slicedToArray(_ref, 1),
+            dirty = _ref2[0];
 
         var previous_block_index = current_block_type_index;
         current_block_type_index = select_block_type(ctx);
@@ -26449,12 +27170,57 @@ var app = (function () {
     };
     dispatch_dev("SvelteRegisterBlock", {
       block: block,
-      id: create_fragment$5.name,
+      id: create_fragment$6.name,
       type: "component",
       source: "",
       ctx: ctx
     });
     return block;
+  }
+
+  function photoSrc(photo) {
+    return "./img/".concat(photo.site, "/").concat(photo.photo.trim(), ".jpg");
+  }
+
+  function photoKey(photo) {
+    return "".concat(photo.site, "/").concat(photo.photo);
+  }
+
+  function checkPhotoExists(photo) {
+    return new Promise(function (resolve) {
+      var img = new Image();
+
+      img.onload = function () {
+        resolve(true);
+      };
+
+      img.onerror = function () {
+        resolve(false);
+      };
+
+      img.src = photoSrc(photo);
+    });
+  }
+
+  function buildActivePhotos(row) {
+    if (!row || !row['Photos']) return [];
+    var photos = row['Photos'].split(/[,;\n]+/).map(function (name) {
+      return name.trim();
+    }).filter(Boolean);
+    var credits = row['Credits'] ? row['Credits'].split(/[,;\n]+/).map(function (c) {
+      return c.trim();
+    }) : [];
+    var ac = [];
+
+    for (var i = 0; i < photos.length; i++) {
+      ac.push({
+        site: "".concat(row['BBL']),
+        photo: photos[i],
+        credit: credits[i] || ''
+      });
+    }
+
+    return ac;
   }
 
   function getCredits(data) {
@@ -26467,7 +27233,7 @@ var app = (function () {
     return a.join(', ');
   }
 
-  function instance$5($$self, $$props, $$invalidate) {
+  function instance$6($$self, $$props, $$invalidate) {
     var _$$props$$$slots = $$props.$$slots,
         slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots;
         $$props.$$scope;
@@ -26475,30 +27241,86 @@ var app = (function () {
     var active_data = $$props.active_data;
     var table = $$props.table;
     var active_table;
-    var active_photos; //filter photos & scrollto top. 
+    var active_photos;
+    var active_bbl = '';
+    var photosLoading = false;
+    var carousel;
+    var currentPhotoIndex = 0;
+
+    function filterExistingPhotos(candidates, bbl) {
+      if (!candidates.length) {
+        $$invalidate(1, active_photos = []);
+        $$invalidate(3, photosLoading = false);
+        return;
+      }
+
+      $$invalidate(3, photosLoading = true);
+      Promise.all(candidates.map(function (photo) {
+        return checkPhotoExists(photo).then(function (exists) {
+          return exists ? photo : null;
+        });
+      })).then(function (results) {
+        if (active_bbl !== bbl) return;
+        $$invalidate(1, active_photos = results.filter(Boolean));
+        $$invalidate(5, currentPhotoIndex = 0);
+        $$invalidate(3, photosLoading = false);
+      });
+    }
+
+    function handlePhotoError(photo) {
+      var key = photoKey(photo);
+      var next = active_photos.filter(function (p) {
+        return photoKey(p) !== key;
+      });
+      if (next.length === active_photos.length) return;
+      $$invalidate(1, active_photos = next);
+
+      if (currentPhotoIndex >= active_photos.length) {
+        $$invalidate(5, currentPhotoIndex = Math.max(0, active_photos.length - 1));
+      }
+    }
+
+    function handlePageChange(event) {
+      $$invalidate(5, currentPhotoIndex = event.detail);
+    }
+
+    function showPrevPhoto() {
+      if (carousel) carousel.goToPrev();
+    }
+
+    function showNextPhoto() {
+      if (carousel) carousel.goToNext();
+    }
+
+    function goToPhoto(index) {
+      if (carousel) carousel.goTo(index);
+    } //filter photos & scrollto top. 
+
 
     afterUpdate(function () {
-      //Filter photos to active data
       if (active_data) {
-        // Get active row from data table
+        var bbl = normalizeBbl(active_data[0].properties.BBL);
         $$invalidate(0, active_table = table.filter(function (row) {
-          return "".concat(row['BBL']) === active_data[0].properties.BBL;
-        })); // Format Photos from the table columns
+          return normalizeBbl(row['BBL']) === bbl;
+        }));
 
-        var photos = active_table[0]['Photos'].split(',');
-        var credits = active_table[0]['Credits'].split(',');
-        var ac = [];
-
-        for (var i = 0; i < photos.length; i++) {
-          ac.push({
-            site: "".concat(active_table[0]['BBL']),
-            photo: photos[i],
-            credit: credits[i]
-          });
-        } //console.log( ac );
-
-
-        $$invalidate(1, active_photos = ac);
+        if (active_table.length > 0 && bbl !== active_bbl) {
+          $$invalidate(2, active_bbl = bbl);
+          $$invalidate(5, currentPhotoIndex = 0);
+          $$invalidate(1, active_photos = []);
+          filterExistingPhotos(buildActivePhotos(active_table[0]), bbl);
+        } else if (active_table.length === 0 && active_bbl) {
+          $$invalidate(2, active_bbl = '');
+          $$invalidate(1, active_photos = []);
+          $$invalidate(3, photosLoading = false);
+          $$invalidate(5, currentPhotoIndex = 0);
+        }
+      } else if (active_bbl) {
+        $$invalidate(2, active_bbl = '');
+        $$invalidate(0, active_table = undefined);
+        $$invalidate(1, active_photos = []);
+        $$invalidate(3, photosLoading = false);
+        $$invalidate(5, currentPhotoIndex = 0);
       }
 
       if (active_data) {
@@ -26526,41 +27348,79 @@ var app = (function () {
       if (!~writable_props.indexOf(key) && key.slice(0, 2) !== '$$' && key !== 'slot') console.warn("<InfoPanel> was created with unknown prop '".concat(key, "'"));
     });
 
+    var error_handler = function error_handler(photo) {
+      return handlePhotoError(photo);
+    };
+
+    function carousel_1_binding($$value) {
+      binding_callbacks[$$value ? 'unshift' : 'push'](function () {
+        carousel = $$value;
+        $$invalidate(4, carousel);
+      });
+    }
+
+    var error_handler_1 = function error_handler_1(photo) {
+      return handlePhotoError(photo);
+    };
+
+    var click_handler = function click_handler(i) {
+      return goToPhoto(i);
+    };
+
     $$self.$$set = function ($$props) {
-      if ('active_data' in $$props) $$invalidate(2, active_data = $$props.active_data);
-      if ('table' in $$props) $$invalidate(3, table = $$props.table);
+      if ('active_data' in $$props) $$invalidate(11, active_data = $$props.active_data);
+      if ('table' in $$props) $$invalidate(12, table = $$props.table);
     };
 
     $$self.$capture_state = function () {
       return {
         afterUpdate: afterUpdate,
         Carousel: Carousel,
+        normalizeBbl: normalizeBbl,
         active_data: active_data,
         table: table,
         active_table: active_table,
         active_photos: active_photos,
+        active_bbl: active_bbl,
+        photosLoading: photosLoading,
+        carousel: carousel,
+        currentPhotoIndex: currentPhotoIndex,
+        photoSrc: photoSrc,
+        photoKey: photoKey,
+        checkPhotoExists: checkPhotoExists,
+        filterExistingPhotos: filterExistingPhotos,
+        handlePhotoError: handlePhotoError,
+        handlePageChange: handlePageChange,
+        showPrevPhoto: showPrevPhoto,
+        showNextPhoto: showNextPhoto,
+        goToPhoto: goToPhoto,
+        buildActivePhotos: buildActivePhotos,
         getCredits: getCredits
       };
     };
 
     $$self.$inject_state = function ($$props) {
-      if ('active_data' in $$props) $$invalidate(2, active_data = $$props.active_data);
-      if ('table' in $$props) $$invalidate(3, table = $$props.table);
+      if ('active_data' in $$props) $$invalidate(11, active_data = $$props.active_data);
+      if ('table' in $$props) $$invalidate(12, table = $$props.table);
       if ('active_table' in $$props) $$invalidate(0, active_table = $$props.active_table);
       if ('active_photos' in $$props) $$invalidate(1, active_photos = $$props.active_photos);
+      if ('active_bbl' in $$props) $$invalidate(2, active_bbl = $$props.active_bbl);
+      if ('photosLoading' in $$props) $$invalidate(3, photosLoading = $$props.photosLoading);
+      if ('carousel' in $$props) $$invalidate(4, carousel = $$props.carousel);
+      if ('currentPhotoIndex' in $$props) $$invalidate(5, currentPhotoIndex = $$props.currentPhotoIndex);
     };
 
     if ($$props && "$$inject" in $$props) {
       $$self.$inject_state($$props.$$inject);
     }
 
-    return [active_table, active_photos, active_data, table];
+    return [active_table, active_photos, active_bbl, photosLoading, carousel, currentPhotoIndex, handlePhotoError, handlePageChange, showPrevPhoto, showNextPhoto, goToPhoto, active_data, table, error_handler, carousel_1_binding, error_handler_1, click_handler];
   }
 
   var InfoPanel = /*#__PURE__*/function (_SvelteComponentDev) {
     _inherits(InfoPanel, _SvelteComponentDev);
 
-    var _super = _createSuper$5(InfoPanel);
+    var _super = _createSuper$6(InfoPanel);
 
     function InfoPanel(options) {
       var _this;
@@ -26568,28 +27428,28 @@ var app = (function () {
       _classCallCheck(this, InfoPanel);
 
       _this = _super.call(this, options);
-      init(_assertThisInitialized(_this), options, instance$5, create_fragment$5, safe_not_equal, {
-        active_data: 2,
-        table: 3
+      init(_assertThisInitialized(_this), options, instance$6, create_fragment$6, safe_not_equal, {
+        active_data: 11,
+        table: 12
       });
       dispatch_dev("SvelteRegisterComponent", {
         component: _assertThisInitialized(_this),
         tagName: "InfoPanel",
         options: options,
-        id: create_fragment$5.name
+        id: create_fragment$6.name
       });
       var ctx = _this.$$.ctx;
       var props = options.props || {};
 
       if (
       /*active_data*/
-      ctx[2] === undefined && !('active_data' in props)) {
+      ctx[11] === undefined && !('active_data' in props)) {
         console.warn("<InfoPanel> was created without expected prop 'active_data'");
       }
 
       if (
       /*table*/
-      ctx[3] === undefined && !('table' in props)) {
+      ctx[12] === undefined && !('table' in props)) {
         console.warn("<InfoPanel> was created without expected prop 'table'");
       }
 
@@ -26617,117 +27477,456 @@ var app = (function () {
     return InfoPanel;
   }(SvelteComponentDev);
 
-  function _createSuper$4(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$4(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+  function _createSuper$5(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$5(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
 
-  function _isNativeReflectConstruct$4() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
-  var file$4 = "src\\Legend.svelte";
+  function _isNativeReflectConstruct$5() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+  var file$5 = "src\\HatchSwatch.svelte";
 
-  function create_fragment$4(ctx) {
-    var div10;
-    var div0;
-    var t1;
-    var div3;
-    var div1;
-    var hr;
-    var t2;
-    var div2;
-    var t4;
-    var div6;
-    var div4;
-    var t5;
-    var div5;
-    var t6;
-    var br;
-    var t7;
-    var t8;
-    var div9;
-    var div7;
-    var t9;
-    var div8;
+  function create_fragment$5(ctx) {
+    var div;
+    var svg;
+    var defs;
+    var pattern;
+    var rect0;
+    var line;
+    var rect1;
     var block = {
       c: function create() {
-        div10 = element("div");
-        div0 = element("div");
-        div0.textContent = "Bushwick Inlet Park Lots";
-        t1 = space();
-        div3 = element("div");
-        div1 = element("div");
-        hr = element("hr");
-        t2 = space();
-        div2 = element("div");
-        div2.textContent = "Bushwick Inlet Park Boundary";
-        t4 = space();
-        div6 = element("div");
-        div4 = element("div");
-        t5 = space();
-        div5 = element("div");
-        t6 = text("Owned and managed by");
-        br = element("br");
-        t7 = text(" the NYC Parks Dept.");
-        t8 = space();
-        div9 = element("div");
-        div7 = element("div");
-        t9 = space();
-        div8 = element("div");
-        div8.textContent = "Other Adjacent Waterfront Sites";
-        attr_dev(div0, "class", "title svelte-1q9kwvl");
-        add_location(div0, file$4, 2, 4, 28);
-        attr_dev(hr, "class", "svelte-1q9kwvl");
-        add_location(hr, file$4, 5, 13, 131);
-        add_location(div1, file$4, 5, 8, 126);
-        attr_dev(div2, "class", "legend-text svelte-1q9kwvl");
-        add_location(div2, file$4, 6, 8, 151);
-        attr_dev(div3, "class", "legend-item svelte-1q9kwvl");
-        add_location(div3, file$4, 4, 4, 90);
-        attr_dev(div4, "class", "rect svelte-1q9kwvl");
-        set_style(div4, "background", "var(--parkColor)");
-        add_location(div4, file$4, 10, 8, 266);
-        add_location(br, file$4, 11, 53, 381);
-        attr_dev(div5, "class", "legend-text svelte-1q9kwvl");
-        add_location(div5, file$4, 11, 8, 336);
-        attr_dev(div6, "class", "legend-item svelte-1q9kwvl");
-        add_location(div6, file$4, 9, 4, 230);
-        attr_dev(div7, "class", "rect svelte-1q9kwvl");
-        set_style(div7, "background", "var(--stateColor)");
-        add_location(div7, file$4, 15, 8, 467);
-        attr_dev(div8, "class", "legend-text svelte-1q9kwvl");
-        add_location(div8, file$4, 16, 8, 538);
-        attr_dev(div9, "class", "legend-item svelte-1q9kwvl");
-        add_location(div9, file$4, 14, 4, 431);
-        attr_dev(div10, "class", "legend svelte-1q9kwvl");
-        add_location(div10, file$4, 1, 0, 2);
+        div = element("div");
+        svg = svg_element("svg");
+        defs = svg_element("defs");
+        pattern = svg_element("pattern");
+        rect0 = svg_element("rect");
+        line = svg_element("line");
+        rect1 = svg_element("rect");
+        attr_dev(rect0, "width", "10");
+        attr_dev(rect0, "height", "10");
+        attr_dev(rect0, "fill", hatchBgColor);
+        add_location(rect0, file$5, 14, 16, 491);
+        attr_dev(line, "x1", "-10");
+        attr_dev(line, "y1", "5");
+        attr_dev(line, "x2", "20");
+        attr_dev(line, "y2", "5");
+        attr_dev(line, "stroke", hatchLineColor);
+        attr_dev(line, "stroke-width", "1.5");
+        attr_dev(line, "stroke-opacity", "0.8");
+        attr_dev(line, "stroke-linecap", "butt");
+        add_location(line, file$5, 15, 16, 560);
+        attr_dev(pattern, "id", "legend-crosshatch");
+        attr_dev(pattern, "patternUnits", "userSpaceOnUse");
+        attr_dev(pattern, "width", "10");
+        attr_dev(pattern, "height", "10");
+        attr_dev(pattern, "patternTransform", "rotate(0 5 5) scale(0.8)");
+        add_location(pattern, file$5, 7, 12, 245);
+        add_location(defs, file$5, 6, 8, 225);
+        attr_dev(rect1, "width", "100%");
+        attr_dev(rect1, "height", "100%");
+        attr_dev(rect1, "fill", "url(#legend-crosshatch)");
+        attr_dev(rect1, "stroke", hatchStrokeColor);
+        attr_dev(rect1, "stroke-width", "0.8");
+        add_location(rect1, file$5, 27, 8, 921);
+        attr_dev(svg, "width", "100%");
+        attr_dev(svg, "height", "100%");
+        attr_dev(svg, "preserveAspectRatio", "none");
+        attr_dev(svg, "aria-hidden", "true");
+        attr_dev(svg, "class", "svelte-yca7vy");
+        add_location(svg, file$5, 5, 4, 137);
+        attr_dev(div, "class", "hatch-swatch svelte-yca7vy");
+        add_location(div, file$5, 4, 0, 105);
       },
       l: function claim(nodes) {
         throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
       },
       m: function mount(target, anchor) {
-        insert_dev(target, div10, anchor);
-        append_dev(div10, div0);
-        append_dev(div10, t1);
-        append_dev(div10, div3);
-        append_dev(div3, div1);
-        append_dev(div1, hr);
-        append_dev(div3, t2);
-        append_dev(div3, div2);
-        append_dev(div10, t4);
-        append_dev(div10, div6);
-        append_dev(div6, div4);
-        append_dev(div6, t5);
-        append_dev(div6, div5);
-        append_dev(div5, t6);
-        append_dev(div5, br);
-        append_dev(div5, t7);
-        append_dev(div10, t8);
-        append_dev(div10, div9);
-        append_dev(div9, div7);
-        append_dev(div9, t9);
-        append_dev(div9, div8);
+        insert_dev(target, div, anchor);
+        append_dev(div, svg);
+        append_dev(svg, defs);
+        append_dev(defs, pattern);
+        append_dev(pattern, rect0);
+        append_dev(pattern, line);
+        append_dev(svg, rect1);
       },
       p: noop,
       i: noop,
       o: noop,
       d: function destroy(detaching) {
-        if (detaching) detach_dev(div10);
+        if (detaching) detach_dev(div);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_fragment$5.name,
+      type: "component",
+      source: "",
+      ctx: ctx
+    });
+    return block;
+  }
+
+  function instance$5($$self, $$props, $$invalidate) {
+    var _$$props$$$slots = $$props.$$slots,
+        slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots;
+        $$props.$$scope;
+    validate_slots('HatchSwatch', slots, []);
+    var writable_props = [];
+    Object.keys($$props).forEach(function (key) {
+      if (!~writable_props.indexOf(key) && key.slice(0, 2) !== '$$' && key !== 'slot') console.warn("<HatchSwatch> was created with unknown prop '".concat(key, "'"));
+    });
+
+    $$self.$capture_state = function () {
+      return {
+        hatchBgColor: hatchBgColor,
+        hatchLineColor: hatchLineColor,
+        hatchStrokeColor: hatchStrokeColor
+      };
+    };
+
+    return [];
+  }
+
+  var HatchSwatch = /*#__PURE__*/function (_SvelteComponentDev) {
+    _inherits(HatchSwatch, _SvelteComponentDev);
+
+    var _super = _createSuper$5(HatchSwatch);
+
+    function HatchSwatch(options) {
+      var _this;
+
+      _classCallCheck(this, HatchSwatch);
+
+      _this = _super.call(this, options);
+      init(_assertThisInitialized(_this), options, instance$5, create_fragment$5, safe_not_equal, {});
+      dispatch_dev("SvelteRegisterComponent", {
+        component: _assertThisInitialized(_this),
+        tagName: "HatchSwatch",
+        options: options,
+        id: create_fragment$5.name
+      });
+      return _this;
+    }
+
+    return HatchSwatch;
+  }(SvelteComponentDev);
+
+  function _createSuper$4(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct$4(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+
+  function _isNativeReflectConstruct$4() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
+  var file$4 = "src\\Legend.svelte";
+
+  function get_each_context$1(ctx, list, i) {
+    var child_ctx = ctx.slice();
+    child_ctx[0] = list[i];
+    return child_ctx;
+  } // (18:43) 
+
+
+  function create_if_block_2$2(ctx) {
+    var div;
+    var block = {
+      c: function create() {
+        div = element("div");
+        attr_dev(div, "class", "rect svelte-1ecwj28");
+        set_style(div, "background",
+        /*item*/
+        ctx[0].color);
+        add_location(div, file$4, 18, 16, 548);
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, div, anchor);
+      },
+      p: noop,
+      i: noop,
+      o: noop,
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(div);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_if_block_2$2.name,
+      type: "if",
+      source: "(18:43) ",
+      ctx: ctx
+    });
+    return block;
+  } // (14:44) 
+
+
+  function create_if_block_1$2(ctx) {
+    var div;
+    var hatchswatch;
+    var current;
+    hatchswatch = new HatchSwatch({
+      $$inline: true
+    });
+    var block = {
+      c: function create() {
+        div = element("div");
+        create_component(hatchswatch.$$.fragment);
+        attr_dev(div, "class", "rect svelte-1ecwj28");
+        add_location(div, file$4, 14, 16, 406);
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, div, anchor);
+        mount_component(hatchswatch, div, null);
+        current = true;
+      },
+      p: noop,
+      i: function intro(local) {
+        if (current) return;
+        transition_in(hatchswatch.$$.fragment, local);
+        current = true;
+      },
+      o: function outro(local) {
+        transition_out(hatchswatch.$$.fragment, local);
+        current = false;
+      },
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(div);
+        destroy_component(hatchswatch);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_if_block_1$2.name,
+      type: "if",
+      source: "(14:44) ",
+      ctx: ctx
+    });
+    return block;
+  } // (12:12) {#if item.type === 'hr'}
+
+
+  function create_if_block$3(ctx) {
+    var div;
+    var hr;
+    var block = {
+      c: function create() {
+        div = element("div");
+        hr = element("hr");
+        attr_dev(hr, "class", "svelte-1ecwj28");
+        add_location(hr, file$4, 12, 21, 332);
+        add_location(div, file$4, 12, 16, 327);
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, div, anchor);
+        append_dev(div, hr);
+      },
+      p: noop,
+      i: noop,
+      o: noop,
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(div);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_if_block$3.name,
+      type: "if",
+      source: "(12:12) {#if item.type === 'hr'}",
+      ctx: ctx
+    });
+    return block;
+  } // (10:4) {#each legendItems as item}
+
+
+  function create_each_block$1(ctx) {
+    var div1;
+    var current_block_type_index;
+    var if_block;
+    var t0;
+    var div0;
+    var t1_value =
+    /*item*/
+    ctx[0].label + "";
+    var t1;
+    var t2;
+    var current;
+    var if_block_creators = [create_if_block$3, create_if_block_1$2, create_if_block_2$2];
+    var if_blocks = [];
+
+    function select_block_type(ctx, dirty) {
+      if (
+      /*item*/
+      ctx[0].type === 'hr') return 0;
+      if (
+      /*item*/
+      ctx[0].type === 'hatch') return 1;
+      if (
+      /*item*/
+      ctx[0].type === 'rect') return 2;
+      return -1;
+    }
+
+    if (~(current_block_type_index = select_block_type(ctx))) {
+      if_block = if_blocks[current_block_type_index] = if_block_creators[current_block_type_index](ctx);
+    }
+
+    var block = {
+      c: function create() {
+        div1 = element("div");
+        if (if_block) if_block.c();
+        t0 = space();
+        div0 = element("div");
+        t1 = text(t1_value);
+        t2 = space();
+        attr_dev(div0, "class", "legend-text svelte-1ecwj28");
+        add_location(div0, file$4, 20, 12, 637);
+        attr_dev(div1, "class", "legend-item svelte-1ecwj28");
+        add_location(div1, file$4, 10, 8, 246);
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, div1, anchor);
+
+        if (~current_block_type_index) {
+          if_blocks[current_block_type_index].m(div1, null);
+        }
+
+        append_dev(div1, t0);
+        append_dev(div1, div0);
+        append_dev(div0, t1);
+        append_dev(div1, t2);
+        current = true;
+      },
+      p: function update(ctx, dirty) {
+        if (if_block) if_block.p(ctx, dirty);
+      },
+      i: function intro(local) {
+        if (current) return;
+        transition_in(if_block);
+        current = true;
+      },
+      o: function outro(local) {
+        transition_out(if_block);
+        current = false;
+      },
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(div1);
+
+        if (~current_block_type_index) {
+          if_blocks[current_block_type_index].d();
+        }
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_each_block$1.name,
+      type: "each",
+      source: "(10:4) {#each legendItems as item}",
+      ctx: ctx
+    });
+    return block;
+  }
+
+  function create_fragment$4(ctx) {
+    var div1;
+    var div0;
+    var t1;
+    var current;
+    var each_value = legendItems;
+    validate_each_argument(each_value);
+    var each_blocks = [];
+
+    for (var i = 0; i < each_value.length; i += 1) {
+      each_blocks[i] = create_each_block$1(get_each_context$1(ctx, each_value, i));
+    }
+
+    var out = function out(i) {
+      return transition_out(each_blocks[i], 1, 1, function () {
+        each_blocks[i] = null;
+      });
+    };
+
+    var block = {
+      c: function create() {
+        div1 = element("div");
+        div0 = element("div");
+        div0.textContent = "Bushwick Inlet Park Lots";
+        t1 = space();
+
+        for (var _i = 0; _i < each_blocks.length; _i += 1) {
+          each_blocks[_i].c();
+        }
+
+        attr_dev(div0, "class", "title svelte-1ecwj28");
+        add_location(div0, file$4, 7, 4, 151);
+        attr_dev(div1, "class", "legend svelte-1ecwj28");
+        add_location(div1, file$4, 6, 0, 125);
+      },
+      l: function claim(nodes) {
+        throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, div1, anchor);
+        append_dev(div1, div0);
+        append_dev(div1, t1);
+
+        for (var _i2 = 0; _i2 < each_blocks.length; _i2 += 1) {
+          each_blocks[_i2].m(div1, null);
+        }
+
+        current = true;
+      },
+      p: function update(ctx, _ref) {
+        var _ref2 = _slicedToArray(_ref, 1),
+            dirty = _ref2[0];
+
+        if (dirty &
+        /*legendItems*/
+        0) {
+          each_value = legendItems;
+          validate_each_argument(each_value);
+
+          var _i3;
+
+          for (_i3 = 0; _i3 < each_value.length; _i3 += 1) {
+            var child_ctx = get_each_context$1(ctx, each_value, _i3);
+
+            if (each_blocks[_i3]) {
+              each_blocks[_i3].p(child_ctx, dirty);
+
+              transition_in(each_blocks[_i3], 1);
+            } else {
+              each_blocks[_i3] = create_each_block$1(child_ctx);
+
+              each_blocks[_i3].c();
+
+              transition_in(each_blocks[_i3], 1);
+
+              each_blocks[_i3].m(div1, null);
+            }
+          }
+
+          group_outros();
+
+          for (_i3 = each_value.length; _i3 < each_blocks.length; _i3 += 1) {
+            out(_i3);
+          }
+
+          check_outros();
+        }
+      },
+      i: function intro(local) {
+        if (current) return;
+
+        for (var _i4 = 0; _i4 < each_value.length; _i4 += 1) {
+          transition_in(each_blocks[_i4]);
+        }
+
+        current = true;
+      },
+      o: function outro(local) {
+        each_blocks = each_blocks.filter(Boolean);
+
+        for (var _i5 = 0; _i5 < each_blocks.length; _i5 += 1) {
+          transition_out(each_blocks[_i5]);
+        }
+
+        current = false;
+      },
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(div1);
+        destroy_each(each_blocks, detaching);
       }
     };
     dispatch_dev("SvelteRegisterBlock", {
@@ -26740,7 +27939,7 @@ var app = (function () {
     return block;
   }
 
-  function instance$4($$self, $$props) {
+  function instance$4($$self, $$props, $$invalidate) {
     var _$$props$$$slots = $$props.$$slots,
         slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots;
         $$props.$$scope;
@@ -26749,6 +27948,14 @@ var app = (function () {
     Object.keys($$props).forEach(function (key) {
       if (!~writable_props.indexOf(key) && key.slice(0, 2) !== '$$' && key !== 'slot') console.warn("<Legend> was created with unknown prop '".concat(key, "'"));
     });
+
+    $$self.$capture_state = function () {
+      return {
+        legendItems: legendItems,
+        HatchSwatch: HatchSwatch
+      };
+    };
+
     return [];
   }
 
@@ -26781,121 +27988,320 @@ var app = (function () {
   function _isNativeReflectConstruct$3() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
   var file$3 = "src\\Legend_Small.svelte";
 
-  function create_fragment$3(ctx) {
-    var div10;
-    var div0;
-    var t1;
-    var div3;
-    var div1;
-    var hr;
-    var t2;
-    var div2;
-    var t4;
-    var div6;
-    var div4;
-    var t5;
-    var div5;
-    var t6;
-    var br0;
-    var t7;
-    var t8;
-    var div9;
-    var div7;
-    var t9;
-    var div8;
-    var t10;
-    var br1;
-    var t11;
+  function get_each_context(ctx, list, i) {
+    var child_ctx = ctx.slice();
+    child_ctx[0] = list[i];
+    return child_ctx;
+  } // (18:43) 
+
+
+  function create_if_block_2$1(ctx) {
+    var div;
     var block = {
       c: function create() {
-        div10 = element("div");
-        div0 = element("div");
-        div0.textContent = "Bushwick Inlet Park Lots";
-        t1 = space();
-        div3 = element("div");
-        div1 = element("div");
-        hr = element("hr");
-        t2 = space();
-        div2 = element("div");
-        div2.textContent = "Bushwick Inlet Park Boundary";
-        t4 = space();
-        div6 = element("div");
-        div4 = element("div");
-        t5 = space();
-        div5 = element("div");
-        t6 = text("Owned and managed by the ");
-        br0 = element("br");
-        t7 = text("NYC Parks Dept.");
-        t8 = space();
-        div9 = element("div");
-        div7 = element("div");
-        t9 = space();
-        div8 = element("div");
-        t10 = text("Other Adjacent");
-        br1 = element("br");
-        t11 = text("Waterfront Sites");
-        attr_dev(div0, "class", "title svelte-s87xyr");
-        add_location(div0, file$3, 2, 4, 28);
-        attr_dev(hr, "class", "svelte-s87xyr");
-        add_location(hr, file$3, 5, 13, 131);
-        add_location(div1, file$3, 5, 8, 126);
-        attr_dev(div2, "class", "legend-text svelte-s87xyr");
-        add_location(div2, file$3, 6, 8, 151);
-        attr_dev(div3, "class", "legend-item svelte-s87xyr");
-        add_location(div3, file$3, 4, 4, 90);
-        attr_dev(div4, "class", "rect svelte-s87xyr");
-        set_style(div4, "background", "var(--parkColor)");
-        add_location(div4, file$3, 10, 8, 266);
-        add_location(br0, file$3, 11, 58, 386);
-        attr_dev(div5, "class", "legend-text svelte-s87xyr");
-        add_location(div5, file$3, 11, 8, 336);
-        attr_dev(div6, "class", "legend-item svelte-s87xyr");
-        add_location(div6, file$3, 9, 4, 230);
-        attr_dev(div7, "class", "rect svelte-s87xyr");
-        set_style(div7, "background", "var(--stateColor)");
-        add_location(div7, file$3, 15, 8, 467);
-        add_location(br1, file$3, 16, 47, 577);
-        attr_dev(div8, "class", "legend-text svelte-s87xyr");
-        add_location(div8, file$3, 16, 8, 538);
-        attr_dev(div9, "class", "legend-item svelte-s87xyr");
-        add_location(div9, file$3, 14, 4, 431);
-        attr_dev(div10, "class", "legend svelte-s87xyr");
-        add_location(div10, file$3, 1, 0, 2);
-      },
-      l: function claim(nodes) {
-        throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
+        div = element("div");
+        attr_dev(div, "class", "rect svelte-l6845p");
+        set_style(div, "background",
+        /*item*/
+        ctx[0].color);
+        add_location(div, file$3, 18, 16, 548);
       },
       m: function mount(target, anchor) {
-        insert_dev(target, div10, anchor);
-        append_dev(div10, div0);
-        append_dev(div10, t1);
-        append_dev(div10, div3);
-        append_dev(div3, div1);
-        append_dev(div1, hr);
-        append_dev(div3, t2);
-        append_dev(div3, div2);
-        append_dev(div10, t4);
-        append_dev(div10, div6);
-        append_dev(div6, div4);
-        append_dev(div6, t5);
-        append_dev(div6, div5);
-        append_dev(div5, t6);
-        append_dev(div5, br0);
-        append_dev(div5, t7);
-        append_dev(div10, t8);
-        append_dev(div10, div9);
-        append_dev(div9, div7);
-        append_dev(div9, t9);
-        append_dev(div9, div8);
-        append_dev(div8, t10);
-        append_dev(div8, br1);
-        append_dev(div8, t11);
+        insert_dev(target, div, anchor);
       },
       p: noop,
       i: noop,
       o: noop,
       d: function destroy(detaching) {
-        if (detaching) detach_dev(div10);
+        if (detaching) detach_dev(div);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_if_block_2$1.name,
+      type: "if",
+      source: "(18:43) ",
+      ctx: ctx
+    });
+    return block;
+  } // (14:44) 
+
+
+  function create_if_block_1$1(ctx) {
+    var div;
+    var hatchswatch;
+    var current;
+    hatchswatch = new HatchSwatch({
+      $$inline: true
+    });
+    var block = {
+      c: function create() {
+        div = element("div");
+        create_component(hatchswatch.$$.fragment);
+        attr_dev(div, "class", "rect svelte-l6845p");
+        add_location(div, file$3, 14, 16, 406);
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, div, anchor);
+        mount_component(hatchswatch, div, null);
+        current = true;
+      },
+      p: noop,
+      i: function intro(local) {
+        if (current) return;
+        transition_in(hatchswatch.$$.fragment, local);
+        current = true;
+      },
+      o: function outro(local) {
+        transition_out(hatchswatch.$$.fragment, local);
+        current = false;
+      },
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(div);
+        destroy_component(hatchswatch);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_if_block_1$1.name,
+      type: "if",
+      source: "(14:44) ",
+      ctx: ctx
+    });
+    return block;
+  } // (12:12) {#if item.type === 'hr'}
+
+
+  function create_if_block$2(ctx) {
+    var div;
+    var hr;
+    var block = {
+      c: function create() {
+        div = element("div");
+        hr = element("hr");
+        attr_dev(hr, "class", "svelte-l6845p");
+        add_location(hr, file$3, 12, 21, 332);
+        add_location(div, file$3, 12, 16, 327);
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, div, anchor);
+        append_dev(div, hr);
+      },
+      p: noop,
+      i: noop,
+      o: noop,
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(div);
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_if_block$2.name,
+      type: "if",
+      source: "(12:12) {#if item.type === 'hr'}",
+      ctx: ctx
+    });
+    return block;
+  } // (10:4) {#each legendItems as item}
+
+
+  function create_each_block(ctx) {
+    var div1;
+    var current_block_type_index;
+    var if_block;
+    var t0;
+    var div0;
+    var t1_value =
+    /*item*/
+    ctx[0].label + "";
+    var t1;
+    var t2;
+    var current;
+    var if_block_creators = [create_if_block$2, create_if_block_1$1, create_if_block_2$1];
+    var if_blocks = [];
+
+    function select_block_type(ctx, dirty) {
+      if (
+      /*item*/
+      ctx[0].type === 'hr') return 0;
+      if (
+      /*item*/
+      ctx[0].type === 'hatch') return 1;
+      if (
+      /*item*/
+      ctx[0].type === 'rect') return 2;
+      return -1;
+    }
+
+    if (~(current_block_type_index = select_block_type(ctx))) {
+      if_block = if_blocks[current_block_type_index] = if_block_creators[current_block_type_index](ctx);
+    }
+
+    var block = {
+      c: function create() {
+        div1 = element("div");
+        if (if_block) if_block.c();
+        t0 = space();
+        div0 = element("div");
+        t1 = text(t1_value);
+        t2 = space();
+        attr_dev(div0, "class", "legend-text svelte-l6845p");
+        add_location(div0, file$3, 20, 12, 637);
+        attr_dev(div1, "class", "legend-item svelte-l6845p");
+        add_location(div1, file$3, 10, 8, 246);
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, div1, anchor);
+
+        if (~current_block_type_index) {
+          if_blocks[current_block_type_index].m(div1, null);
+        }
+
+        append_dev(div1, t0);
+        append_dev(div1, div0);
+        append_dev(div0, t1);
+        append_dev(div1, t2);
+        current = true;
+      },
+      p: function update(ctx, dirty) {
+        if (if_block) if_block.p(ctx, dirty);
+      },
+      i: function intro(local) {
+        if (current) return;
+        transition_in(if_block);
+        current = true;
+      },
+      o: function outro(local) {
+        transition_out(if_block);
+        current = false;
+      },
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(div1);
+
+        if (~current_block_type_index) {
+          if_blocks[current_block_type_index].d();
+        }
+      }
+    };
+    dispatch_dev("SvelteRegisterBlock", {
+      block: block,
+      id: create_each_block.name,
+      type: "each",
+      source: "(10:4) {#each legendItems as item}",
+      ctx: ctx
+    });
+    return block;
+  }
+
+  function create_fragment$3(ctx) {
+    var div1;
+    var div0;
+    var t1;
+    var current;
+    var each_value = legendItems;
+    validate_each_argument(each_value);
+    var each_blocks = [];
+
+    for (var i = 0; i < each_value.length; i += 1) {
+      each_blocks[i] = create_each_block(get_each_context(ctx, each_value, i));
+    }
+
+    var out = function out(i) {
+      return transition_out(each_blocks[i], 1, 1, function () {
+        each_blocks[i] = null;
+      });
+    };
+
+    var block = {
+      c: function create() {
+        div1 = element("div");
+        div0 = element("div");
+        div0.textContent = "Bushwick Inlet Park Lots";
+        t1 = space();
+
+        for (var _i = 0; _i < each_blocks.length; _i += 1) {
+          each_blocks[_i].c();
+        }
+
+        attr_dev(div0, "class", "title svelte-l6845p");
+        add_location(div0, file$3, 7, 4, 151);
+        attr_dev(div1, "class", "legend svelte-l6845p");
+        add_location(div1, file$3, 6, 0, 125);
+      },
+      l: function claim(nodes) {
+        throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
+      },
+      m: function mount(target, anchor) {
+        insert_dev(target, div1, anchor);
+        append_dev(div1, div0);
+        append_dev(div1, t1);
+
+        for (var _i2 = 0; _i2 < each_blocks.length; _i2 += 1) {
+          each_blocks[_i2].m(div1, null);
+        }
+
+        current = true;
+      },
+      p: function update(ctx, _ref) {
+        var _ref2 = _slicedToArray(_ref, 1),
+            dirty = _ref2[0];
+
+        if (dirty &
+        /*legendItems*/
+        0) {
+          each_value = legendItems;
+          validate_each_argument(each_value);
+
+          var _i3;
+
+          for (_i3 = 0; _i3 < each_value.length; _i3 += 1) {
+            var child_ctx = get_each_context(ctx, each_value, _i3);
+
+            if (each_blocks[_i3]) {
+              each_blocks[_i3].p(child_ctx, dirty);
+
+              transition_in(each_blocks[_i3], 1);
+            } else {
+              each_blocks[_i3] = create_each_block(child_ctx);
+
+              each_blocks[_i3].c();
+
+              transition_in(each_blocks[_i3], 1);
+
+              each_blocks[_i3].m(div1, null);
+            }
+          }
+
+          group_outros();
+
+          for (_i3 = each_value.length; _i3 < each_blocks.length; _i3 += 1) {
+            out(_i3);
+          }
+
+          check_outros();
+        }
+      },
+      i: function intro(local) {
+        if (current) return;
+
+        for (var _i4 = 0; _i4 < each_value.length; _i4 += 1) {
+          transition_in(each_blocks[_i4]);
+        }
+
+        current = true;
+      },
+      o: function outro(local) {
+        each_blocks = each_blocks.filter(Boolean);
+
+        for (var _i5 = 0; _i5 < each_blocks.length; _i5 += 1) {
+          transition_out(each_blocks[_i5]);
+        }
+
+        current = false;
+      },
+      d: function destroy(detaching) {
+        if (detaching) detach_dev(div1);
+        destroy_each(each_blocks, detaching);
       }
     };
     dispatch_dev("SvelteRegisterBlock", {
@@ -26908,7 +28314,7 @@ var app = (function () {
     return block;
   }
 
-  function instance$3($$self, $$props) {
+  function instance$3($$self, $$props, $$invalidate) {
     var _$$props$$$slots = $$props.$$slots,
         slots = _$$props$$$slots === void 0 ? {} : _$$props$$$slots;
         $$props.$$scope;
@@ -26917,6 +28323,14 @@ var app = (function () {
     Object.keys($$props).forEach(function (key) {
       if (!~writable_props.indexOf(key) && key.slice(0, 2) !== '$$' && key !== 'slot') console.warn("<Legend_Small> was created with unknown prop '".concat(key, "'"));
     });
+
+    $$self.$capture_state = function () {
+      return {
+        legendItems: legendItems,
+        HatchSwatch: HatchSwatch
+      };
+    };
+
     return [];
   }
 
@@ -28460,7 +29874,7 @@ var app = (function () {
 
   function _isNativeReflectConstruct() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); return true; } catch (e) { return false; } }
   var document_1 = globals.document;
-  var file = "src\\App.svelte"; // (214:0) {:else}
+  var file = "src\\App.svelte"; // (207:0) {:else}
 
   function create_else_block_2(ctx) {
     var div;
@@ -28473,9 +29887,9 @@ var app = (function () {
         t0 = text("Loading.... ");
         br = element("br");
         t1 = text("\r\n\t\tPlease Wait...");
-        add_location(br, file, 215, 14, 6103);
+        add_location(br, file, 208, 14, 6074);
         attr_dev(div, "class", "wait svelte-vhe4rx");
-        add_location(div, file, 214, 1, 6069);
+        add_location(div, file, 207, 1, 6040);
       },
       m: function mount(target, anchor) {
         insert_dev(target, div, anchor);
@@ -28494,11 +29908,11 @@ var app = (function () {
       block: block,
       id: create_else_block_2.name,
       type: "else",
-      source: "(214:0) {:else}",
+      source: "(207:0) {:else}",
       ctx: ctx
     });
     return block;
-  } // (170:0) {#if data.border.length > 0 }
+  } // (163:0) {#if data.border.length > 0 }
 
 
   function create_if_block(ctx) {
@@ -28550,9 +29964,9 @@ var app = (function () {
         t1 = space();
         create_component(resizeobserver.$$.fragment);
         attr_dev(div0, "class", "left-panel");
-        add_location(div0, file, 171, 2, 5107);
+        add_location(div0, file, 164, 2, 5070);
         attr_dev(div1, "class", "two-column");
-        add_location(div1, file, 170, 1, 5079);
+        add_location(div1, file, 163, 1, 5042);
       },
       m: function mount(target, anchor) {
         insert_dev(target, div1, anchor);
@@ -28625,11 +30039,11 @@ var app = (function () {
       block: block,
       id: create_if_block.name,
       type: "if",
-      source: "(170:0) {#if data.border.length > 0 }",
+      source: "(163:0) {#if data.border.length > 0 }",
       ctx: ctx
     });
     return block;
-  } // (182:5) {:else}
+  } // (175:5) {:else}
 
 
   function create_else_block_1(ctx) {
@@ -28663,11 +30077,11 @@ var app = (function () {
       block: block,
       id: create_else_block_1.name,
       type: "else",
-      source: "(182:5) {:else}",
+      source: "(175:5) {:else}",
       ctx: ctx
     });
     return block;
-  } // (180:5) {#if islandscape == false}
+  } // (173:5) {#if islandscape == false}
 
 
   function create_if_block_2(ctx) {
@@ -28701,11 +30115,11 @@ var app = (function () {
       block: block,
       id: create_if_block_2.name,
       type: "if",
-      source: "(180:5) {#if islandscape == false}",
+      source: "(173:5) {#if islandscape == false}",
       ctx: ctx
     });
     return block;
-  } // (179:4) {#key islandscape}
+  } // (172:4) {#key islandscape}
 
 
   function create_key_block(ctx) {
@@ -28774,11 +30188,11 @@ var app = (function () {
       block: block,
       id: create_key_block.name,
       type: "key",
-      source: "(179:4) {#key islandscape}",
+      source: "(172:4) {#key islandscape}",
       ctx: ctx
     });
     return block;
-  } // (173:3) <LeafletMap >
+  } // (166:3) <LeafletMap >
 
 
   function create_default_slot(ctx) {
@@ -28808,7 +30222,10 @@ var app = (function () {
       props: {
         geojson:
         /*data*/
-        ctx[1].bip
+        ctx[1].bip,
+        table:
+        /*table*/
+        ctx[4]
       },
       $$inline: true
     });
@@ -28916,11 +30333,11 @@ var app = (function () {
       block: block,
       id: create_default_slot.name,
       type: "slot",
-      source: "(173:3) <LeafletMap >",
+      source: "(166:3) <LeafletMap >",
       ctx: ctx
     });
     return block;
-  } // (199:2) {:else}
+  } // (192:2) {:else}
 
 
   function create_else_block(ctx) {
@@ -28950,9 +30367,9 @@ var app = (function () {
         t1 = space();
         create_component(shrunkpanel.$$.fragment);
         attr_dev(div0, "class", "shrink svelte-vhe4rx");
-        add_location(div0, file, 201, 4, 5852);
+        add_location(div0, file, 194, 4, 5823);
         attr_dev(div1, "class", "right-panel shrunk svelte-vhe4rx");
-        add_location(div1, file, 199, 3, 5808);
+        add_location(div1, file, 192, 3, 5779);
       },
       m: function mount(target, anchor) {
         insert_dev(target, div1, anchor);
@@ -28997,11 +30414,11 @@ var app = (function () {
       block: block,
       id: create_else_block.name,
       type: "else",
-      source: "(199:2) {:else}",
+      source: "(192:2) {:else}",
       ctx: ctx
     });
     return block;
-  } // (190:2) {#if shrunk == false}
+  } // (183:2) {#if shrunk == false}
 
 
   function create_if_block_1(ctx) {
@@ -29031,9 +30448,9 @@ var app = (function () {
         t1 = space();
         create_component(infopanel.$$.fragment);
         attr_dev(div0, "class", "shrink svelte-vhe4rx");
-        add_location(div0, file, 192, 4, 5668);
+        add_location(div0, file, 185, 4, 5639);
         attr_dev(div1, "class", "right-panel svelte-vhe4rx");
-        add_location(div1, file, 190, 3, 5635);
+        add_location(div1, file, 183, 3, 5606);
       },
       m: function mount(target, anchor) {
         insert_dev(target, div1, anchor);
@@ -29078,7 +30495,7 @@ var app = (function () {
       block: block,
       id: create_if_block_1.name,
       type: "if",
-      source: "(190:2) {#if shrunk == false}",
+      source: "(183:2) {#if shrunk == false}",
       ctx: ctx
     });
     return block;
@@ -29115,13 +30532,13 @@ var app = (function () {
         if_block_anchor = empty();
         attr_dev(link0, "href", "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.12.1/css/all.min.css");
         attr_dev(link0, "rel", "stylesheet");
-        add_location(link0, file, 163, 1, 4805);
+        add_location(link0, file, 156, 1, 4768);
         attr_dev(link1, "rel", "stylesheet");
         attr_dev(link1, "href", "https://use.typekit.net/kjc8ltt.css");
-        add_location(link1, file, 164, 1, 4914);
+        add_location(link1, file, 157, 1, 4877);
         attr_dev(link2, "rel", "stylesheet");
         attr_dev(link2, "href", "leaflet.css");
-        add_location(link2, file, 165, 1, 4983);
+        add_location(link2, file, 158, 1, 4946);
       },
       l: function claim(nodes) {
         throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -29191,8 +30608,8 @@ var app = (function () {
     return block;
   }
 
-  var url_lots = "https://raw.githubusercontent.com/PrattSAVI/FBIP/main/public/data/BIP_FinalLots.geojson";
-  var url_border = "https://raw.githubusercontent.com/PrattSAVI/FBIP/main/public/data/BIP_lines_4326.geojson";
+  var url_lots = "https://raw.githubusercontent.com/cankadir/FBIP/refs/heads/2606-updates/public/data/260626_BIP_updatedLots.geojson";
+  var url_border = "https://raw.githubusercontent.com/cankadir/FBIP/refs/heads/2606-updates/public/data/BIP_lines_4326.geojson";
 
   function instance($$self, $$props, $$invalidate) {
     var _$$props$$$slots = $$props.$$slots,
@@ -29261,9 +30678,9 @@ var app = (function () {
 
               temp.forEach(function (el) {
                 var ac = table.filter(function (row) {
-                  return "".concat(row['BBL']) === el.properties.BBL;
+                  return normalizeBbl(row['BBL']) === normalizeBbl(el.properties.BBL);
                 });
-                el.properties.Owner = ac[0]['Owner'];
+                if (ac[0]) el.properties.Owner = ac[0]['Owner'];
               }); // Initiate data.BIP
 
               $$invalidate(1, data.bip = temp, data); // Borders
@@ -29293,32 +30710,19 @@ var app = (function () {
       if (shrunk) {
         $$invalidate(2, shrunk = !shrunk);
         document.getElementsByClassName('legend')[0].style.visibility = "hidden";
-      } //Get clicked polygons unique ID
+      } // Match clicked parcel by BBL (Block+Lot is not unique — e.g. CitiStorage N/S)
 
 
       var active = e.detail.active;
-      var obj_id = active._path.id;
-      obj_id = obj_id.split(" ")[0]; //Onject has multiple IDs. 0 is the unique
-      //Filter data by unique ID to retireve active polygon from the GeoJSON data not HTML object. 
-
+      var bbl = normalizeBbl(active.feature.properties.BBL);
       $$invalidate(0, active_data = data.bip.filter(function (feature) {
-        var blocklot = String(feature.properties.Block) + String(feature.properties.Lot);
-
-        if (blocklot === obj_id) {
-          return true;
-        } else {
-          return false;
-        }
+        return normalizeBbl(feature.properties.BBL) === bbl;
       }));
     }
 
     function handleClick(e) {
       $$invalidate(0, active_data = null);
-      var active = document.getElementsByClassName("active")[0];
-
-      if (active) {
-        active.className.baseVal = "leaflet-interactive";
-      }
+      mapActions.resetSelection();
     }
 
     var shrunk = false;
@@ -29393,6 +30797,8 @@ var app = (function () {
         Legend: Legend,
         LegendSmall: Legend_Small,
         ShrunkPanel: ShrunkPanel,
+        normalizeBbl: normalizeBbl,
+        mapActions: mapActions,
         url_lots: url_lots,
         url_border: url_border,
         active_data: active_data,

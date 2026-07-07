@@ -2,6 +2,7 @@
 <script>
     import * as L from 'leaflet';
     import { count } from "./store.js";
+    import { mapPanes } from "./utils.js";
     import {afterUpdate} from "svelte";
 
     export let geojson;
@@ -21,7 +22,9 @@
     }
 
     const layerBehind = L.geoJSON(geojson,{
+        pane: mapPanes.borderWhite,
         style: styleBehind,
+        interactive: false,
     }).addTo(map);
 
     //Dashed Orange Line
@@ -35,7 +38,9 @@
     }
 
     const layer = L.geoJSON(geojson,{
+        pane: mapPanes.borderDash,
         style: style,
+        interactive: false,
     }).addTo(map);
 
     

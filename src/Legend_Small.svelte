@@ -1,21 +1,26 @@
 
+<script>
+    import { legendItems } from './store.js';
+    import HatchSwatch from './HatchSwatch.svelte';
+</script>
+
 <div class="legend">
     <div class="title"> Bushwick Inlet Park Lots</div>
-    
-    <div class="legend-item" >
-        <div><hr></div>
-        <div class="legend-text">Bushwick Inlet Park Boundary</div>
-    </div>
 
-    <div class="legend-item" >
-        <div class="rect" style="background:var(--parkColor)"></div>
-        <div class="legend-text">Owned and managed by the <br>NYC Parks Dept.</div>
-    </div>
-
-    <div class="legend-item" >
-        <div class="rect" style="background:var(--stateColor)"></div>
-        <div class="legend-text">Other Adjacent<br>Waterfront Sites</div>
-    </div>
+    {#each legendItems as item}
+        <div class="legend-item">
+            {#if item.type === 'hr'}
+                <div><hr></div>
+            {:else if item.type === 'hatch'}
+                <div class="rect">
+                    <HatchSwatch />
+                </div>
+            {:else if item.type === 'rect'}
+                <div class="rect" style="background:{item.color}"></div>
+            {/if}
+            <div class="legend-text">{item.label}</div>
+        </div>
+    {/each}
 
 </div>
 
@@ -26,9 +31,11 @@
         bottom:18px;
         right:365px!important;
         left:auto!important;
+        display:flex;
+        flex-direction:column;
+        gap:10px;
         font-size: 8pt;
         width: 230px;
-        height: 100px;
         z-index: 2000;
         padding: 8px;
         line-height: 0.8rem;
@@ -60,12 +67,12 @@
     }
 
     .legend-item{
-        padding:3px;
         display: grid;
         grid-template-columns: 0.2fr 1fr;
     }
 
     .rect{
+        position: relative;
         width:100%;
         height:100%;
         stroke-dasharray: 2em;

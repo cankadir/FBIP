@@ -1,143 +1,174 @@
 
 <script>
     import * as L from 'leaflet';
-    import { count } from "./store.js";
+    import { count, mapLabels, mapActions } from "./store.js";
+    import {
+        addLabel2,
+        getUndevelopedFeatures, addCrossHatchPattern, applyHatchFill, getHatchOverlayStyle,
+        mapPanes, isUndevelopedOwner, enforceMapLayerOrder,
+        getParcelStyle, getSelectedFillColor, normalizeBbl,
+    } from "./utils.js";
 
     import { createEventDispatcher } from 'svelte';
 	const dispatch = createEventDispatcher();
 
     export let geojson;
+    export let table = [];
 
-    //countValue is map object stored in the store.js
+    let hatchLayer;
+    let previousActiveLayer;
+    let previousHatchLayer;
+    let activeOutlineLayer;
+
     let map;
     count.subscribe(value => {
         map = value;
     });
 
-    //Zoom to active polygon and write id to store.
-    function activePolygon(e){
+    function findHatchLayer(feature) {
+        if (!hatchLayer) return null;
 
-        map.setView( e.target.getBounds().getCenter() ,17)
+        var bbl = normalizeBbl(feature.properties && feature.properties.BBL);
+        var match = null;
 
-        //Set an active class to clicked Element
-        let active = [...document.getElementsByClassName("active")];
-        if (active.length > 0){ //If an element is selected
-            active.forEach( function(feature){
-                feature.className.baseVal = 'leaflet-interactive'; //Set it back to leaflet
-            })
+        hatchLayer.eachLayer(function (layer) {
+            var layerBbl = normalizeBbl(layer.feature.properties && layer.feature.properties.BBL);
+            if (layerBbl === bbl) match = layer;
+        });
+
+        return match;
+    }
+
+    function clearSelection() {
+        if (previousActiveLayer && previousActiveLayer._savedStyle) {
+            previousActiveLayer.setStyle(previousActiveLayer._savedStyle);
+            previousActiveLayer._savedStyle = null;
+        }
+        previousActiveLayer = null;
+
+        if (previousHatchLayer) {
+            applyHatchFill(previousHatchLayer, false);
+            previousHatchLayer = null;
         }
 
-        //Bring all polygons, (layer) back so that the border is visible
-        layer.bringToBack();
+        if (activeOutlineLayer) {
+            map.removeLayer(activeOutlineLayer);
+            activeOutlineLayer = null;
+        }
 
-        e.target._path.className.baseVal = e.target._path.className.baseVal + " active";
-        e.target.bringToFront()
-        
-        //Send active ID out
-        dispatch('message', {
-			active: e.target
-		}); 
+        enforceMapLayerOrder(map);
     }
 
-    //General styling to feed into Leaflet
-    function getColor(d) {
-        return d === "other" ? "var(--stateColor)" :
-            d === "bip"  ? "var(--parkColor)" :
-            d === ""  ? "FFFFFF" :
-                        '#FFFFFF';
-    }
-    function LineColor(d) {
-        return d === "other" ? "white" :
-            d === "bip"  ? "white" :
-            d === ""  ? "black" :
-                        '#000000';
-    }
-    function lineWeight(d) {
-        return d === "other" ? 0.8 :
-            d === "bip"  ? 0.8 :
-            d === ""  ? .5:
-                        .5;
-    }
+    function activePolygon(e) {
+        map.setView(e.target.getBounds().getCenter(), 17);
 
-    // 1.BIP Lot STYLE
-    function style(feature) {
-        return {
-            fillColor: getColor(feature.properties.Owner),
-            color: LineColor(feature.properties.Owner),
+        clearSelection();
+
+        var owner = e.target.feature.properties.Owner;
+        var layer = e.target;
+
+        layer._savedStyle = getParcelStyle(owner);
+        layer.setStyle({
+            fillColor: getSelectedFillColor(),
             fillOpacity: 0.9,
-            weight: lineWeight(feature.properties.Owner),
-            opacity: 0.9,
-        };
+        });
+        previousActiveLayer = layer;
+
+        if (isUndevelopedOwner(owner)) {
+            previousHatchLayer = findHatchLayer(layer.feature);
+            if (previousHatchLayer) applyHatchFill(previousHatchLayer, true);
+        }
+
+        // Orange outline only (no fill) in selected pane — above hatch and borders
+        activeOutlineLayer = L.geoJSON(e.target.feature, {
+            pane: mapPanes.selected,
+            interactive: false,
+            style: {
+                stroke: true,
+                color: '#F4B303',
+                weight: 4,
+                opacity: 1,
+                fill: false,
+                fillOpacity: 0,
+            },
+        }).addTo(map);
+
+        enforceMapLayerOrder(map);
+
+        dispatch('message', {
+            active: e.target
+        });
+    }
+
+    function style(feature) {
+        return getParcelStyle(feature.properties.Owner);
     }
 
     function onEachFeature(feature, layer) {
-        //Only bind popup if Owner Column is not empty
-        if( feature.properties.Owner ){
+        if (feature.properties.Owner) {
             layer.openTooltip();
             layer.on({
-                click:activePolygon,
-            }) 
+                click: activePolygon,
+            });
         }
-    };
+    }
 
-    const layer = L.geoJSON(geojson,{
+    const layer = L.geoJSON(geojson, {
+        pane: mapPanes.parcels,
         style: style,
         onEachFeature: onEachFeature,
     }).addTo(map);
 
-    // Assign a seperate ID for park and outside elements. 
-    layer.eachLayer(function (polygon) {
-            let filler = polygon._path.attributes.fill.value;
-            //Assign unique IDs to each polygon
-            if (filler === "#FFFFFF"){
-                polygon._path.id = String(polygon.feature.properties.Block) + String(polygon.feature.properties.Lot) + " outside"
-            }else{
-                polygon._path.id = String(polygon.feature.properties.Block) + String(polygon.feature.properties.Lot) + " bip"
-            }
+    var undevelopedFeatures = getUndevelopedFeatures(geojson, table);
 
-    });
+    if (undevelopedFeatures.length > 0) {
+        hatchLayer = L.geoJSON({
+            type: 'FeatureCollection',
+            features: undevelopedFeatures,
+        }, {
+            pane: mapPanes.hatch,
+            style: getHatchOverlayStyle,
+            interactive: false,
+        }).addTo(map);
 
-    function addLabel2(lat,lon,label){
-
-        var myIcon = L.divIcon({
-            className: 'map-labels',
-            html: label
+        hatchLayer.eachLayer(function (polygon) {
+            applyHatchFill(polygon);
         });
-        // you can set .my-div-icon styles in CSS
-        L.marker([lat , lon ], {icon: myIcon}).addTo(map);
-    
+
+        addCrossHatchPattern(map, mapPanes.hatch);
     }
 
-    //Create labels in specific locations. 
-    //Bushwick Inlet label is at the Border file. 
-    addLabel2( 40.7216 , -73.9624 , "Marsha&nbsp;P. Johnson State&nbsp;Park" );
-    addLabel2( 40.72430238 , -73.95974738 , "Bayside" );
-    addLabel2( 40.7233, -73.9599 , "50&nbsp;Kent" );
-    addLabel2( 40.72589720 , -73.9612948 , "Monitor&nbsp;Museum" );
-    addLabel2( 40.72586 , -73.9591 , "40&nbsp;Quay" );
-    addLabel2( 40.72525 , -73.9581 , "Motiva" );
-    addLabel2( 40.72331325 , -73.96132996 , "CitiStorage" );
-    addLabel2( 40.72234 , -73.9616 , "86&nbsp;Kent" );
-    addLabel2( 40.7235,-73.961 , "BUSHWICK INLET&nbsp;PARK" );
+    layer.eachLayer(function (polygon) {
+        let owner = polygon.feature.properties.Owner;
+        let bbl = normalizeBbl(polygon.feature.properties.BBL);
 
-    //Hide tooltips based on zoom level. Currently This is set to 17
-    map.on('zoomend', function(e){
+        if (!owner || owner === '') {
+            polygon._path.id = String(polygon.feature.properties.Block) + String(polygon.feature.properties.Lot) + ' outside';
+        } else {
+            polygon._path.id = bbl + ' bip';
+        }
+    });
+
+    mapActions.resetSelection = clearSelection;
+    enforceMapLayerOrder(map);
+
+    mapLabels.forEach(({ lat, lon, label }) => addLabel2(map, lat, lon, label));
+
+    map.on('zoomend', function () {
         var zoomLevel = map.getZoom();
-        if (zoomLevel < 17 ){
+        if (zoomLevel < 17) {
             [].forEach.call(document.querySelectorAll('.map-labels'), function (el) {
-                //Bushwick Inlet Label works reverse
-                if( el.innerHTML !== "BUSHWICK INLET&nbsp;PARK" ){
+                if (el.innerHTML !== 'BUSHWICK INLET&nbsp;PARK') {
                     el.style.visibility = 'hidden';
-                }else{
+                } else {
                     el.style.visibility = 'visible';
                 }
             });
-        
-        }else{
+        } else {
             [].forEach.call(document.querySelectorAll('.map-labels'), function (el) {
-                if( el.innerHTML !== "BUSHWICK INLET&nbsp;PARK" ){
+                if (el.innerHTML !== 'BUSHWICK INLET&nbsp;PARK') {
                     el.style.visibility = 'visible';
-                }else{
+                } else {
                     el.style.visibility = 'hidden';
                 }
             });

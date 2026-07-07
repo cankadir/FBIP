@@ -2,13 +2,108 @@
 <script>
     import {afterUpdate} from "svelte";
     import Carousel from 'svelte-carousel'
+    import { normalizeBbl } from './utils.js';
     export let active_data;
     export let table;
 
     let active_table;
     let active_photos;
+    let active_bbl = '';
+    let photosLoading = false;
+    let carousel;
+    let currentPhotoIndex = 0;
 
-    //Remove credits if they are repeting and convert the list to "," seperated text
+    function photoSrc(photo) {
+        return `./img/${photo.site}/${photo.photo.trim()}.jpg`;
+    }
+
+    function photoKey(photo) {
+        return `${photo.site}/${photo.photo}`;
+    }
+
+    function checkPhotoExists(photo) {
+        return new Promise(function (resolve) {
+            var img = new Image();
+            img.onload = function () { resolve(true); };
+            img.onerror = function () { resolve(false); };
+            img.src = photoSrc(photo);
+        });
+    }
+
+    function filterExistingPhotos(candidates, bbl) {
+        if (!candidates.length) {
+            active_photos = [];
+            photosLoading = false;
+            return;
+        }
+
+        photosLoading = true;
+
+        Promise.all(
+            candidates.map(function (photo) {
+                return checkPhotoExists(photo).then(function (exists) {
+                    return exists ? photo : null;
+                });
+            })
+        ).then(function (results) {
+            if (active_bbl !== bbl) return;
+            active_photos = results.filter(Boolean);
+            currentPhotoIndex = 0;
+            photosLoading = false;
+        });
+    }
+
+    function handlePhotoError(photo) {
+        var key = photoKey(photo);
+        var next = active_photos.filter(function (p) { return photoKey(p) !== key; });
+
+        if (next.length === active_photos.length) return;
+
+        active_photos = next;
+
+        if (currentPhotoIndex >= active_photos.length) {
+            currentPhotoIndex = Math.max(0, active_photos.length - 1);
+        }
+    }
+
+    function handlePageChange(event) {
+        currentPhotoIndex = event.detail;
+    }
+
+    function showPrevPhoto() {
+        if (carousel) carousel.goToPrev();
+    }
+
+    function showNextPhoto() {
+        if (carousel) carousel.goToNext();
+    }
+
+    function goToPhoto(index) {
+        if (carousel) carousel.goTo(index);
+    }
+
+    function buildActivePhotos(row) {
+        if (!row || !row['Photos']) return [];
+
+        let photos = row['Photos']
+            .split(/[,;\n]+/)
+            .map(function (name) { return name.trim(); })
+            .filter(Boolean);
+
+        let credits = row['Credits']
+            ? row['Credits'].split(/[,;\n]+/).map(function (c) { return c.trim(); })
+            : [];
+
+        let ac = [];
+        for (let i = 0; i < photos.length; i++) {
+            ac.push({
+                site: `${row['BBL']}`,
+                photo: photos[i],
+                credit: credits[i] || ''
+            });
+        }
+        return ac;
+    }
     function getCredits(data){
         let a = []
         data.forEach(function(d){
@@ -20,26 +115,30 @@
 
     //filter photos & scrollto top. 
     afterUpdate(() => {
-        //Filter photos to active data
         if (active_data){
-            // Get active row from data table
-            active_table = table.filter( function(row){
-                return `${row['BBL']}` === active_data[0].properties.BBL;
+            let bbl = normalizeBbl(active_data[0].properties.BBL);
+
+            active_table = table.filter(function (row) {
+                return normalizeBbl(row['BBL']) === bbl;
             });
 
-            // Format Photos from the table columns
-            let photos =  active_table[0]['Photos'].split(',') ;
-            let credits =  active_table[0]['Credits'].split(',') ;
-            let ac = [];
-            for( let i=0;i< photos.length; i++){
-                ac.push({
-                    site: `${ active_table[0]['BBL'] }`,
-                    photo: photos[i],
-                    credit: credits[i]
-                })
+            if (active_table.length > 0 && bbl !== active_bbl) {
+                active_bbl = bbl;
+                currentPhotoIndex = 0;
+                active_photos = [];
+                filterExistingPhotos(buildActivePhotos(active_table[0]), bbl);
+            } else if (active_table.length === 0 && active_bbl) {
+                active_bbl = '';
+                active_photos = [];
+                photosLoading = false;
+                currentPhotoIndex = 0;
             }
-            //console.log( ac );
-            active_photos = ac;
+        } else if (active_bbl) {
+            active_bbl = '';
+            active_table = undefined;
+            active_photos = [];
+            photosLoading = false;
+            currentPhotoIndex = 0;
         }
 
 		if (active_data){
@@ -65,42 +164,82 @@
 </script>
 
 <div class="right-content">
-
+    <!-- Show panel whena polygon is selected -->
     {#if active_table}
 
-            <div class="info-title">
-                <span id='pane-title' >{active_table[0]['Text-Name']}</span>
-            </div>
+            {#if active_table[0]['Text-Name']}
+                <div class="info-title">
+                    <span id='pane-title' >{active_table[0]['Text-Name']}</span>
+                </div>
+            {/if}
 
-        {#key active_photos}
+        <!-- Photos: loading state, then carousel if any exist -->
+        {#if photosLoading}
+            <div class="photo-loading" aria-live="polite">
+                <div class="photo-loading-spinner" aria-hidden="true"></div>
+                <span>Loading photos…</span>
+            </div>
+        {:else if active_photos && active_photos.length}
+        {#key active_bbl}
             <div class="photo-container">
                 
                 <Carousel
-                    let:showPrevPage
-                    let:showNextPage
+                    bind:this={carousel}
+                    dots={false}
+                    on:pageChange={handlePageChange}
                 >
 
-                    <div slot="prev" on:click={showPrevPage} class="custom-arrow custom-arrow-prev">
-                        <i>&#10094;<i />
-                    </div>
+                    <button type="button" slot="prev" on:click={showPrevPhoto} class="custom-arrow custom-arrow-prev" aria-label="Previous photo">
+                        <span class="arrow-icon">&#10094;</span>
+                    </button>
 
-                    {#each active_photos as photo }  
-                        <img class="container-photos" alt="test" src= "./img/{photo.site}/{photo.photo.trim()}.jpg" />  
+                    {#each active_photos as photo}
+                        <div class="carousel-slide">
+                            <img
+                                class="container-photos"
+                                alt="Site"
+                                src={photoSrc(photo)}
+                                on:error={() => handlePhotoError(photo)}
+                            />
+                        </div>
                     {/each}
 
-                    <div slot="next" on:click={showNextPage} class="custom-arrow custom-arrow-next">
-                        <i>&#10095;<i />
-                    </div>
+                    <button type="button" slot="next" on:click={showNextPhoto} class="custom-arrow custom-arrow-next" aria-label="Next photo">
+                        <span class="arrow-icon">&#10095;</span>
+                    </button>
 
                 </Carousel>
+
+                <div class="photo-thumbs">
+                    {#each active_photos as photo, i}
+                        <button
+                            type="button"
+                            class="photo-thumb"
+                            class:thumb-active={currentPhotoIndex === i}
+                            aria-label="Show photo {i + 1}"
+                            on:click={() => goToPhoto(i)}
+                        >
+                            <img
+                                src={photoSrc(photo)}
+                                alt=""
+                                on:error={() => handlePhotoError(photo)}
+                            />
+                        </button>
+                    {/each}
+                </div>
             </div>
         
         {/key}
+        {/if}
 
         <div class="info-container">
 
-            <p><span id='info-title' >{active_table[0]['Text-Acres']}</span></p>
-            <p><span id='info-title' >{active_table[0]['Text-Address']}</span></p>
+            {#if active_table[0]['Text-Acres']}
+                <p><span id='info-title' >{active_table[0]['Text-Acres']}</span></p>
+            {/if}
+            {#if active_table[0]['Text-Address']}
+                <p><span id='info-title' >{active_table[0]['Text-Address']}</span></p>
+            {/if}
 
             {#if active_table[0]['Text-Copy']}
                 <p><span id='info-title' >{@html active_table[0]['Text-Copy']}</span></p>
@@ -113,7 +252,7 @@
                 <p><strong>Website: </strong><span id='info-title' ><a href={active_table[0]['Text_Web']} target="_blank">{active_table[0]['Text_Web']}</a></span></p>
             {/if}
 
-            {#if active_photos}
+            {#if active_photos && active_photos.length}
                 <p class='photo-credit'>Photo Credits: {getCredits(active_photos)}</p>
             {/if}
         </div>
@@ -138,21 +277,67 @@
 
 <style>
 
+.photo-container{
+    width:100%;
+}
+
+.photo-loading{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    min-height:200px;
+    color:#666;
+    font-size:10pt;
+}
+
+.photo-loading-spinner{
+    width:18px;
+    height:18px;
+    border:2px solid #ddd;
+    border-top-color:var(--parkColor, #82C444);
+    border-radius:50%;
+    animation:photo-spin 0.7s linear infinite;
+}
+
+@keyframes photo-spin{
+    to { transform:rotate(360deg); }
+}
+
+/* Hide svelte-carousel default dots — we use .photo-thumbs below instead */
+.photo-container :global(.sc-carousel-dots__container){
+    display:none !important;
+}
+
+.photo-container :global(img.container-photos){
+    width:100%;
+    height:auto;
+    max-height:200px;
+    object-fit:cover;
+    display:block;
+}
+
 .custom-arrow{
     font-family: Arial, Helvetica, sans-serif;
     font-style: normal;
     color:#222;
     font-size:18pt;
     font-weight: 900;
-    width:30px;
+    width:44px;
     height:100%;
     position:absolute;
     z-index:3;
+    border:none;
     background:rgba(255,255,255,0.15)!important;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
+    padding:0;
+}
+
+.arrow-icon{
+    line-height:1;
 }
 
 .custom-arrow.custom-arrow-next{
@@ -160,11 +345,38 @@
 }
 	
 .custom-arrow.custom-arrow-prev{
-    left:0
+    left:0;
 }
 
-i{
-    font-style: normal!important;
+.photo-thumbs{
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:center;
+    gap:6px;
+    padding:8px 44px 4px;
+    width:100%;
+    box-sizing:border-box;
+}
+
+.photo-thumb{
+    padding:0;
+    border:2px solid transparent;
+    background:none;
+    cursor:pointer;
+    flex-shrink:0;
+}
+
+.photo-thumb.thumb-active{
+    border-color:var(--parkColor, #4a7c59);
+}
+
+.photo-thumb img{
+    width:52px;
+    height:40px;
+    max-width:52px;
+    max-height:40px;
+    object-fit:cover;
+    display:block;
 }
 
 </style>

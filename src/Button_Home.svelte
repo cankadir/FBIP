@@ -12,11 +12,8 @@
     });
 
     function homeclick(){
-        //console.log( "momo" );
         map.setView([40.723, -73.961],17);
-            dispatch('homebutton', {
-                    text: 'Hello!'
-                });
+        dispatch('homebutton');
     }
 
 </script>

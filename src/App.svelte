@@ -9,10 +9,13 @@
 	import Legend from './Legend.svelte';
 	import LegendSmall from './Legend_Small.svelte';
 	import ShrunkPanel from './ShrunkPanel.svelte';
+	import { normalizeBbl } from './utils.js';
+	import { mapActions } from './store.js';
 
 	//Retrieve Data from Github Repo
-	const url_lots = "https://raw.githubusercontent.com/PrattSAVI/FBIP/main/public/data/BIP_FinalLots.geojson";
-	const url_border = "https://raw.githubusercontent.com/PrattSAVI/FBIP/main/public/data/BIP_lines_4326.geojson";
+	// const url_lots = "https://raw.githubusercontent.com/PrattSAVI/FBIP/main/public/data/BIP_FinalLots.geojson";
+	const url_lots = "https://raw.githubusercontent.com/cankadir/FBIP/refs/heads/2606-updates/public/data/260626_BIP_updatedLots.geojson";
+	const url_border = "https://raw.githubusercontent.com/cankadir/FBIP/refs/heads/2606-updates/public/data/BIP_lines_4326.geojson";
 
 	let active_data;
 
@@ -62,9 +65,9 @@
 		//Add Owner Info to BIP, this get pushed into Geojson for styling
 		temp.forEach( el => {
 			let ac = table.filter( row =>{
-				return `${row['BBL']}` === el.properties.BBL
+				return normalizeBbl(row['BBL']) === normalizeBbl(el.properties.BBL)
 			})
-			el.properties.Owner = ac[0]['Owner'];
+			if (ac[0]) el.properties.Owner = ac[0]['Owner'];
 		})
 		
 		// Initiate data.BIP
@@ -86,28 +89,18 @@
 			document.getElementsByClassName('legend')[0].style.visibility = "hidden";
 		}
 
-		//Get clicked polygons unique ID
-		 let active = e.detail.active;
-		 let obj_id = active._path.id
-		 obj_id = obj_id.split(" ")[0] //Onject has multiple IDs. 0 is the unique
+		// Match clicked parcel by BBL (Block+Lot is not unique — e.g. CitiStorage N/S)
+		let active = e.detail.active;
+		let bbl = normalizeBbl(active.feature.properties.BBL);
 
-		 //Filter data by unique ID to retireve active polygon from the GeoJSON data not HTML object. 
-		active_data = data.bip.filter(function(feature){
-			let blocklot = String(feature.properties.Block) + String(feature.properties.Lot);
-			if( blocklot === obj_id ){
-				return true
-			}else{
-				return false
-			}
-		})
+		active_data = data.bip.filter(function (feature) {
+			return normalizeBbl(feature.properties.BBL) === bbl;
+		});
 	}
 
 	function handleClick(e){
 		active_data = null;
-		let active = document.getElementsByClassName("active")[0];
-		if (active){
-			active.className.baseVal = "leaflet-interactive"
-		}
+		mapActions.resetSelection();
 	}
 
 	let shrunk = false;
@@ -173,7 +166,7 @@
 			<LeafletMap >
 				<ButtonHome on:homebutton={handleClick}/>
 				<ButtonLayer />
-				<GeoJson on:message={handleMessage} geojson={data.bip} />
+				<GeoJson on:message={handleMessage} geojson={data.bip} {table} />
 				<GeoJsonBorder geojson={data.border} />
 				<!--Legend Size is dependent on Mobile-->
 				{#key islandscape}
