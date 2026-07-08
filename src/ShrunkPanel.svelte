@@ -9,7 +9,6 @@
             active_table = table.filter( function(row){
                 return `${row['BBL']}` === active_data[0].properties.BBL;
             });
-            console.log( active_table );
     }
 
 </script>

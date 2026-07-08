@@ -21,7 +21,6 @@
     }
 
     function handlelayer(){
-        console.log('MOMO')
         reverseViz();
     }
 

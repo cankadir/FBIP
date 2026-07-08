@@ -70,15 +70,18 @@
         currentPhotoIndex = event.detail;
     }
 
-    function showPrevPhoto() {
+    function showPrevPhoto(event) {
+        event.preventDefault();
         if (carousel) carousel.goToPrev();
     }
 
-    function showNextPhoto() {
+    function showNextPhoto(event) {
+        event.preventDefault();
         if (carousel) carousel.goToNext();
     }
 
-    function goToPhoto(index) {
+    function goToPhoto(index, event) {
+        event.preventDefault();
         if (carousel) carousel.goTo(index);
     }
 
@@ -113,25 +116,39 @@
         return a.join(', ');
     }
 
-    //filter photos & scrollto top. 
+    function scrollPanelToTop() {
+        let element = document.getElementsByClassName('right-panel')[0];
+        if (!element) return;
+
+        element.scroll({ top: 0, behavior: 'auto' });
+
+        // If the scroll did not work, try again after layout settles
+        setTimeout(function () {
+            if (element.scrollTop !== 0) {
+                element.scroll({ top: 0, behavior: 'auto' });
+            }
+        }, 500);
+    }
+
+    // Load panel content and scroll only when the selected parcel changes
     afterUpdate(() => {
-        if (active_data){
+        if (active_data) {
             let bbl = normalizeBbl(active_data[0].properties.BBL);
 
-            active_table = table.filter(function (row) {
-                return normalizeBbl(row['BBL']) === bbl;
-            });
-
-            if (active_table.length > 0 && bbl !== active_bbl) {
+            if (bbl !== active_bbl) {
                 active_bbl = bbl;
+                active_table = table.filter(function (row) {
+                    return normalizeBbl(row['BBL']) === bbl;
+                });
                 currentPhotoIndex = 0;
-                active_photos = [];
-                filterExistingPhotos(buildActivePhotos(active_table[0]), bbl);
-            } else if (active_table.length === 0 && active_bbl) {
-                active_bbl = '';
                 active_photos = [];
                 photosLoading = false;
-                currentPhotoIndex = 0;
+
+                if (active_table.length > 0) {
+                    filterExistingPhotos(buildActivePhotos(active_table[0]), bbl);
+                }
+
+                scrollPanelToTop();
             }
         } else if (active_bbl) {
             active_bbl = '';
@@ -139,25 +156,6 @@
             active_photos = [];
             photosLoading = false;
             currentPhotoIndex = 0;
-        }
-
-		if (active_data){
-            //Scroll to top on active data change. 
-            let element = document.getElementsByClassName("right-panel")[0];
-            element.scroll({
-                top:0,
-                behavior:'auto'
-            });
-            
-            //If the scroll did not work, try again. 
-            setTimeout(function(){ 
-                if(element.scrollTop !== 0){
-                    element.scroll({
-                        top:0,
-                        behavior:'auto'
-                    });
-                }
-            }, 500);
         }
 	});
 
@@ -186,6 +184,8 @@
                 <Carousel
                     bind:this={carousel}
                     dots={false}
+                    duration={280}
+                    timingFunction="ease-out"
                     on:pageChange={handlePageChange}
                 >
 
@@ -217,7 +217,7 @@
                             class="photo-thumb"
                             class:thumb-active={currentPhotoIndex === i}
                             aria-label="Show photo {i + 1}"
-                            on:click={() => goToPhoto(i)}
+                            on:click|preventDefault={(e) => goToPhoto(i, e)}
                         >
                             <img
                                 src={photoSrc(photo)}
@@ -279,6 +279,20 @@
 
 .photo-container{
     width:100%;
+    /* Let horizontal swipes hit the carousel, not the panel scroll */
+    touch-action: pan-y;
+}
+
+.photo-container :global(.sc-carousel__pages-window){
+    touch-action: pan-x pinch-zoom;
+}
+
+.photo-container :global(.sc-carousel__pages-container){
+    touch-action: pan-x pinch-zoom;
+}
+
+.photo-container :global(.sc-carousel__content-container){
+    touch-action: pan-x pinch-zoom;
 }
 
 .photo-loading{
@@ -315,6 +329,9 @@
     max-height:200px;
     object-fit:cover;
     display:block;
+    -webkit-user-drag:none;
+    user-select:none;
+    pointer-events:none;
 }
 
 .custom-arrow{
@@ -334,6 +351,7 @@
     align-items: center;
     justify-content: center;
     padding:0;
+    touch-action: manipulation;
 }
 
 .arrow-icon{
@@ -364,6 +382,7 @@
     background:none;
     cursor:pointer;
     flex-shrink:0;
+    touch-action: manipulation;
 }
 
 .photo-thumb.thumb-active{
@@ -377,6 +396,17 @@
     max-height:40px;
     object-fit:cover;
     display:block;
+}
+
+@media only screen and (max-width: 690px) {
+    .custom-arrow{
+        width:32px;
+    }
+
+    .photo-thumbs{
+        padding-left:8px;
+        padding-right:8px;
+    }
 }
 
 </style>

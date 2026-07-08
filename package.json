@@ -5,7 +5,8 @@
     "scripts": {
         "build": "rollup -c",
         "dev": "rollup -c -w",
-        "start": "sirv public --no-clear"
+        "start": "sirv public --no-clear",
+        "start:lan": "sirv public --host --no-clear --port 5000"
     },
     "devDependencies": {
         "@babel/core": "^7.15.8",
